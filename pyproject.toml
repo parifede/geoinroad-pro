@@ -1,0 +1,32 @@
+[project]
+name = "geoinroad-pro"
+version = "1.0.0"
+description = "Timelog manager per Dimetior"
+dependencies = [
+    "flet==0.84.0",
+    "flet-webview==0.84.0",
+    "flet-secure-storage==0.84.0",
+]
+
+[tool.flet]
+org = "com.geoinroad"
+product = "Geoinroad Pro"
+company = "Geoinroad"
+description = "Timelog manager per Dimetior"
+
+[tool.flet.android]
+min_sdk_version = 28
+adaptive_icon_background = "#ffffff"
+
+[tool.flet.splash]
+color = "#ffffff"
+dark_color = "#ffffff"
+
+[tool.flet.android.permission]
+"android.permission.INTERNET" = true
+"android.permission.USE_BIOMETRIC" = true
+"android.permission.USE_FINGERPRINT" = true
+
+[tool.flet.android.manifest_application]
+"allowBackup" = "false"
+"fullBackupContent" = "false"
