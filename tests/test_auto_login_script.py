@@ -35,6 +35,22 @@ class AutoLoginScriptTest(unittest.TestCase):
         self.assertIn("__geoinroadAutologinRan", script)
         self.assertIn("scheduleAutoLogin();", script)
 
+    def test_stats_scraper_attributes_hours_to_correct_day(self):
+        script = build_auto_login_script(username="user@example.test", password="secret")
+
+        # Le pagine con ?date= sono relative a un solo giorno: la data URL vince.
+        self.assertIn("if (sourceDateMatch) return sourceDateMatch[1];", script)
+        # Le pagine calendario non producono righe orario generiche (giorni diversi
+        # finirebbero tutti sulla stessa data di fallback).
+        self.assertIn("isCalendarUrl", script)
+        self.assertIn("if (!isCalendarUrl) {", script)
+        # Le righe keyword (es. "Totale 173") non possono diventare ore giornaliere.
+        self.assertIn("plausibleHours", script)
+        self.assertIn("numericValue <= 24", script)
+        self.assertIn('/dom\\/keyword/i.test(source)) return 10;', script)
+        # Le pause non vengono conteggiate come turni.
+        self.assertIn("pausa|pause|break|riposo", script)
+
     def test_stats_scraper_normalizes_dash_variants_and_start_end_labels(self):
         script = build_auto_login_script(username="user@example.test", password="secret")
 
@@ -80,8 +96,9 @@ class AutoLoginScriptTest(unittest.TestCase):
     def test_stats_merge_prefers_calendar_or_diary_turns_over_route_times(self):
         script = build_auto_login_script(username="user@example.test", password="secret")
 
-        self.assertIn("bestPositiveByDate", script)
-        self.assertIn("compareRows(row, current) > 0", script)
+        self.assertIn("bestPriorityByDate", script)
+        self.assertIn("rowPriority(row) !== bestPriorityByDate.get(row.date)", script)
+        self.assertIn("shiftKeys", script)
         self.assertIn("planner\\/route", script)
         self.assertIn("driver_calendar", script)
         self.assertIn("timeRangeFromApiObject", script)

@@ -231,9 +231,10 @@
       ].join("-"),
     }));
     const sourceDateMatch = String(sourceUrl || "").match(/[?&]date=(\d{4}-\d{2}-\d{2})/);
+    const isCalendarUrl = /\/calendar/i.test(String(sourceUrl || ""));
 
     function fallbackDate() {
-      return dates[0]?.iso || sourceDateMatch?.[1] || new Date().toISOString().slice(0, 10);
+      return sourceDateMatch?.[1] || dates[0]?.iso || new Date().toISOString().slice(0, 10);
     }
 
     function toMinutes(t) {
@@ -242,6 +243,7 @@
     }
 
     function dateForIndex(index) {
+      if (sourceDateMatch) return sourceDateMatch[1];
       let result = fallbackDate();
       for (const item of dates) {
         if (item.index <= index) result = item.iso;
@@ -273,30 +275,34 @@
       ].join("-");
     }
 
-    for (const match of bodyText.matchAll(timeRangePattern)) {
-      const startMin = toMinutes(match[1]);
-      const endMin = toMinutes(match[2]);
-      let deltaMin = endMin - startMin;
-      if (deltaMin < 0) deltaMin += 1440;
-      const workDate = dateForIndex(match.index || 0);
-      const label = "Turno " + match[1] + "-" + match[2];
-      const key = workDate + "|" + label;
-      if (!seenLabels.has(key)) {
-        seenLabels.add(key);
-        rows.push({
-          label: label,
-          value: (deltaMin / 60).toFixed(2),
-          raw: bodyText.slice(Math.max(0, (match.index || 0) - 120), (match.index || 0) + 180),
-          date: workDate,
-          start_time: match[1],
-          end_time: match[2],
-          source: "dom/time-range",
-          source_url: sourceUrl,
-        });
+    if (!isCalendarUrl) {
+      for (const match of bodyText.matchAll(timeRangePattern)) {
+        const contextBefore = bodyText.slice(Math.max(0, (match.index || 0) - 60), match.index || 0);
+        if (/pausa|pause|break|riposo/i.test(contextBefore)) continue;
+        const startMin = toMinutes(match[1]);
+        const endMin = toMinutes(match[2]);
+        let deltaMin = endMin - startMin;
+        if (deltaMin < 0) deltaMin += 1440;
+        const workDate = dateForIndex(match.index || 0);
+        const label = "Turno " + match[1] + "-" + match[2];
+        const key = workDate + "|" + label;
+        if (!seenLabels.has(key)) {
+          seenLabels.add(key);
+          rows.push({
+            label: label,
+            value: (deltaMin / 60).toFixed(2),
+            raw: bodyText.slice(Math.max(0, (match.index || 0) - 120), (match.index || 0) + 180),
+            date: workDate,
+            start_time: match[1],
+            end_time: match[2],
+            source: "dom/time-range",
+            source_url: sourceUrl,
+          });
+        }
       }
     }
 
-    const isCalendar = /CALENDARIO/i.test(bodyText);
+    const isCalendar = isCalendarUrl || /CALENDARIO/i.test(bodyText);
     const driverStatusMatch = isCalendar
       ? null
       : bodyText.match(/\b(Presente no route|Libero)\s*\(([^)]+)\)\s*(?:(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})|n\.d\.\s*-\s*n\.d\.)?/i);
@@ -356,14 +362,25 @@
 
     const startMatches = Array.from(bodyText.matchAll(/(?:Inizio|Start)[:\s]+(\d{1,2}:\d{2})/gi));
     const endMatches = Array.from(bodyText.matchAll(/(?:Fine|End)[:\s]+(\d{1,2}:\d{2})/gi));
-    for (let i = 0; i < Math.min(startMatches.length, endMatches.length); i++) {
+    let endCursor = 0;
+    for (let i = 0; i < startMatches.length && !isCalendarUrl; i++) {
+      const startIndex = startMatches[i].index || 0;
+      while (endCursor < endMatches.length && (endMatches[endCursor].index || 0) < startIndex) {
+        endCursor += 1;
+      }
+      if (endCursor >= endMatches.length) break;
+      const nextStartIndex =
+        i + 1 < startMatches.length ? (startMatches[i + 1].index || 0) : Infinity;
+      if ((endMatches[endCursor].index || 0) >= nextStartIndex) continue;
+      const endMatch = endMatches[endCursor];
+      endCursor += 1;
       const start = startMatches[i][1];
-      const end = endMatches[i][1];
+      const end = endMatch[1];
       const startMin = toMinutes(start);
       const endMin = toMinutes(end);
       let deltaMin = endMin - startMin;
       if (deltaMin < 0) deltaMin += 1440;
-      const workDate = dateForIndex(startMatches[i].index || 0);
+      const workDate = dateForIndex(startIndex);
       const label = "Turno " + start + "-" + end;
       const key = workDate + "|" + label;
       if (!seenLabels.has(key)) {
@@ -371,7 +388,7 @@
         rows.push({
           label: label,
           value: (deltaMin / 60).toFixed(2),
-          raw: bodyText.slice(Math.max(0, (startMatches[i].index || 0) - 120), (endMatches[i].index || 0) + 120),
+          raw: bodyText.slice(Math.max(0, startIndex - 120), (endMatch.index || 0) + 120),
           date: workDate,
           start_time: start,
           end_time: end,
@@ -387,12 +404,14 @@
       const kwMatch = text.match(keywordPattern);
       if (kwMatch) {
         const label = kwMatch[1];
+        const numericValue = parseFloat(kwMatch[2].replace(",", "."));
+        const plausibleHours = isFinite(numericValue) && numericValue > 0 && numericValue <= 24;
         const key = "kw|" + label + "|" + text;
         if (!seenLabels.has(key)) {
           seenLabels.add(key);
           rows.push({
             label: label,
-            value: kwMatch[2].replace(",", "."),
+            value: plausibleHours ? kwMatch[2].replace(",", ".") : "0",
             raw: text.slice(0, 180),
             date: fallbackDate(),
             source: "dom/keyword",
@@ -764,29 +783,34 @@
   function mergeStatsPayloads(payloads, fetches) {
     const mergedRows = [];
     const seen = new Set();
-    const bestPositiveByDate = new Map();
-    const bestPositiveKeys = new Set();
+    const bestPriorityByDate = new Map();
     for (const payload of payloads) {
       for (const row of payload.rows || []) {
         const value = parseFloat(row.value || "0") || 0;
         if (value <= 0 || !row.date) continue;
-        const current = bestPositiveByDate.get(row.date);
-        if (!current || compareRows(row, current) > 0) {
-          bestPositiveByDate.set(row.date, row);
+        const priority = rowPriority(row);
+        const current = bestPriorityByDate.get(row.date);
+        if (current === undefined || priority > current) {
+          bestPriorityByDate.set(row.date, priority);
         }
       }
     }
-    for (const row of bestPositiveByDate.values()) {
-      bestPositiveKeys.add(rowIdentity(row));
-    }
 
+    const shiftKeys = new Set();
     for (const payload of payloads) {
       for (const row of payload.rows || []) {
         const value = parseFloat(row.value || "0") || 0;
-        const identity = rowIdentity(row);
-        if (value > 0 && row.date && !bestPositiveKeys.has(identity)) continue;
-        if (value <= 0 && row.date && bestPositiveByDate.has(row.date)) continue;
-        const key = identity;
+        if (value > 0 && row.date) {
+          if (rowPriority(row) !== bestPriorityByDate.get(row.date)) continue;
+          const shiftKey = row.start_time && row.end_time
+            ? row.date + "|" + row.start_time + "|" + row.end_time
+            : row.date + "|" + String(row.label || "") + "|" + String(row.value || "");
+          if (shiftKeys.has(shiftKey)) continue;
+          shiftKeys.add(shiftKey);
+        } else if (value <= 0 && row.date && bestPriorityByDate.has(row.date)) {
+          continue;
+        }
+        const key = rowIdentity(row);
         if (seen.has(key)) continue;
         seen.add(key);
         mergedRows.push(row);
@@ -821,15 +845,10 @@
     ].join("|");
   }
 
-  function compareRows(left, right) {
-    const priorityDelta = rowPriority(left) - rowPriority(right);
-    if (priorityDelta) return priorityDelta;
-    return (parseFloat(left.value || "0") || 0) - (parseFloat(right.value || "0") || 0);
-  }
-
   function rowPriority(row) {
     const source = String(row.source || "");
     const sourceUrl = String(row.source_url || "");
+    if (/dom\/keyword/i.test(source)) return 10;
     if (/planner\/route/i.test(source) || /\/driver\/route\//i.test(sourceUrl)) return 20;
     if (/driver_calendar/i.test(source)) return 80;
     if (/dom\/driver-status|dom\/time-range/i.test(source) && !/\/driver\/route\//i.test(sourceUrl)) return 90;
@@ -945,6 +964,8 @@
   }
 
   window.GeoinroadApp = window.GeoinroadApp || {};
+  window.GeoinroadApp.extractCandidateStats = extractCandidateStats;
+  window.GeoinroadApp.mergeStatsPayloads = mergeStatsPayloads;
   window.GeoinroadApp.collectStats = async function (options = {}) {
     try {
       const quickPayload = extractCandidateStats();

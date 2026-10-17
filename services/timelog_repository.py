@@ -335,16 +335,22 @@ class TimelogRepository:
                 "SELECT MAX(captured_at) FROM timelogs WHERE account_id = ? AND value > 0",
                 (account_id,),
             ).fetchone()[0]
-            average_value = conn.execute(
-                "SELECT COALESCE(AVG(value), 0) FROM timelogs WHERE account_id = ? AND value > 0",
+            worked_days = conn.execute(
+                """
+                SELECT COUNT(DISTINCT COALESCE(work_date, substr(captured_at, 1, 10)))
+                FROM timelogs
+                WHERE account_id = ? AND value > 0
+                """,
                 (account_id,),
             ).fetchone()[0]
 
+        total_value = float(total_value or 0)
+        worked_days = int(worked_days or 0)
         return {
             "total_entries": int(total_entries or 0),
-            "total_value": float(total_value or 0),
+            "total_value": total_value,
             "latest_capture": latest_capture,
-            "average_value": float(average_value or 0),
+            "average_value": (total_value / worked_days) if worked_days else 0.0,
         }
 
     def _fetch_recent_entries_sync(
@@ -482,9 +488,10 @@ class TimelogRepository:
     ) -> dict:
         start, end = self._period_bounds(period, anchor_date)
         with self._connect(db_path) as conn:
-            total_entries, total_value, average_value = conn.execute(
+            total_entries, total_value, worked_days = conn.execute(
                 """
-                SELECT COUNT(*), COALESCE(SUM(value), 0), COALESCE(AVG(value), 0)
+                SELECT COUNT(*), COALESCE(SUM(value), 0),
+                       COUNT(DISTINCT COALESCE(work_date, substr(captured_at, 1, 10)))
                 FROM timelogs
                 WHERE account_id = ?
                   AND value > 0
@@ -494,13 +501,15 @@ class TimelogRepository:
                 (account_id, start.isoformat(), end.isoformat()),
             ).fetchone()
 
+        total_value = float(total_value or 0)
+        worked_days = int(worked_days or 0)
         return {
             "period": period,
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
             "total_entries": int(total_entries or 0),
-            "total_value": float(total_value or 0),
-            "average_value": float(average_value or 0),
+            "total_value": total_value,
+            "average_value": (total_value / worked_days) if worked_days else 0.0,
         }
 
     @staticmethod

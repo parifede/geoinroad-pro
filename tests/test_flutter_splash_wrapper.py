@@ -1,7 +1,13 @@
 import unittest
 from pathlib import Path
 
+_FLUTTER_MAIN = Path("build/flutter/lib/main.dart")
 
+
+@unittest.skipUnless(
+    _FLUTTER_MAIN.exists(),
+    "richiede l'output di 'flet build' (build/flutter/lib/main.dart)",
+)
 class FlutterSplashWrapperTest(unittest.TestCase):
     def test_boot_screen_uses_animated_lottie_startup_splash(self):
         source = Path("build/flutter/lib/main.dart").read_text(encoding="utf-8")
