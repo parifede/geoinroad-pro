@@ -25,7 +25,8 @@ class StatsButtonTest(unittest.TestCase):
     def test_dashboard_opens_over_live_webview_so_scraping_can_finish(self):
         source = Path("main.py").read_text(encoding="utf-8")
         match = re.search(
-            r"def show_dashboard_over_live_webview\(\) -> bool:\n(?P<body>.*?)(?=\n    def )",
+            r"def show_overlay_over_live_webview\(route: str, build_overlay\) -> bool:\n"
+            r"(?P<body>.*?)(?=\n    def )",
             source,
             flags=re.S,
         )
@@ -34,7 +35,15 @@ class StatsButtonTest(unittest.TestCase):
         body = match.group("body")
         self.assertIn("view.route == ROUTE_WEBVIEW", body)
         self.assertIn("page.views.append(", body)
-        self.assertIn("build_dashboard_view", body)
+
+        dashboard_match = re.search(
+            r"def show_dashboard_over_live_webview\(\) -> bool:\n(?P<body>.*?)(?=\n    def )",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(dashboard_match)
+        self.assertIn("show_overlay_over_live_webview(", dashboard_match.group("body"))
+        self.assertIn("build_dashboard_view", dashboard_match.group("body"))
 
     def test_dashboard_back_and_period_changes_preserve_live_webview_stack(self):
         source = Path("main.py").read_text(encoding="utf-8")

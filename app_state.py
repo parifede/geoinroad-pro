@@ -63,6 +63,9 @@ class AppState:
     web_progress_ref: ft.Ref[ft.ProgressBar] = field(
         default_factory=lambda: ft.Ref[ft.ProgressBar]()
     )
+    report_status_ref: ft.Ref[ft.Text] = field(
+        default_factory=lambda: ft.Ref[ft.Text]()
+    )
     storage_paths: ft.StoragePaths = field(default_factory=lambda: ft.StoragePaths())
     timelog_repository: TimelogRepository = field(default_factory=TimelogRepository)
     session_unlocked: bool = False
@@ -80,6 +83,9 @@ class AppState:
     last_console_message: str = ""
     scraped_stats: dict = field(default_factory=dict)
     last_stats_debug: dict = field(default_factory=dict)
+    last_report: dict = field(default_factory=dict)
+    last_report_id: str = ""
+    saved_reports: list[dict] = field(default_factory=list)
     timelog_summary: dict = field(default_factory=dict)
     timelog_period_summary: dict = field(default_factory=dict)
     timelog_recent_entries: list[dict] = field(default_factory=list)

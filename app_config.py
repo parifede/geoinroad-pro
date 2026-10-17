@@ -5,6 +5,7 @@ ROUTE_LOCK = "/"
 ROUTE_SPLASH = "/splash"
 ROUTE_WEBVIEW = "/diario"
 ROUTE_DASHBOARD = "/statistiche"
+ROUTE_REPORT = "/report"
 
 APP_NAMESPACE = "geoinroad_pro"
 CREDENTIALS_READY_KEY = f"{APP_NAMESPACE}.credentials_ready"

@@ -10,6 +10,7 @@ class AndroidBackNavigationTest(unittest.TestCase):
             "views/web_view.py",
             "views/dashboard.py",
             "views/splash_screen.py",
+            "views/report_screen.py",
         ):
             source = Path(path).read_text(encoding="utf-8")
             self.assertIn("can_pop=False", source, path)

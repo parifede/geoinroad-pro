@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import flet as ft
 
@@ -13,6 +14,7 @@ from app_config import (
     RELOAD_PREFIX,
     ROUTE_DASHBOARD,
     ROUTE_LOCK,
+    ROUTE_REPORT,
     ROUTE_SPLASH,
     ROUTE_WEBVIEW,
     STATS_PREFIX,
@@ -20,10 +22,17 @@ from app_config import (
 )
 from app_state import AppState
 from services.credential_store import CredentialStore
-from services.bug_report import build_whatsapp_report_url
+from services.bug_report import (
+    build_report_id,
+    build_report_text,
+    build_whatsapp_report_url,
+    list_saved_reports,
+    save_report,
+)
 from services.js_bridge import build_auto_login_script
 from views.dashboard import build_dashboard_view
 from views.lock_screen import build_lock_screen
+from views.report_screen import build_report_view
 from views.splash_screen import build_splash_view
 from views.web_view import build_web_view
 
@@ -209,32 +218,41 @@ def main(page: ft.Page):
         set_web_status("Script JS iniettato: auto-login e menu rapido pronti.")
         page.run_task(start_background_stats_sync)
 
-    def show_dashboard_over_live_webview() -> bool:
+    overlay_routes = (ROUTE_DASHBOARD, ROUTE_REPORT)
+
+    def show_overlay_over_live_webview(route: str, build_overlay) -> bool:
         if state.session_unlocked and any(
             view.route == ROUTE_WEBVIEW for view in page.views
         ):
-            page.route = ROUTE_DASHBOARD
+            page.route = route
             page.drawer = None
             page.views = [
-                view for view in page.views if view.route != ROUTE_DASHBOARD
+                view for view in page.views if view.route not in overlay_routes
             ]
-            page.views.append(
-                build_dashboard_view(
-                    page=page,
-                    state=state,
-                    on_back_to_diary=back_to_diary,
-                    on_period_change=set_dashboard_period,
-                )
-            )
+            page.views.append(build_overlay())
             page.update()
             return True
         return False
+
+    def show_dashboard_over_live_webview() -> bool:
+        return show_overlay_over_live_webview(
+            ROUTE_DASHBOARD,
+            lambda: build_dashboard_view(
+                page=page,
+                state=state,
+                on_back_to_diary=back_to_diary,
+                on_period_change=set_dashboard_period,
+            ),
+        )
+
+    def show_report_over_live_webview() -> bool:
+        return show_overlay_over_live_webview(ROUTE_REPORT, _build_report_view)
 
     def reveal_live_webview() -> bool:
         if any(view.route == ROUTE_WEBVIEW for view in page.views):
             page.route = ROUTE_WEBVIEW
             page.views = [
-                view for view in page.views if view.route != ROUTE_DASHBOARD
+                view for view in page.views if view.route not in overlay_routes
             ]
             page.update()
             return True
@@ -345,6 +363,16 @@ def main(page: ft.Page):
         except Exception as exc:
             set_web_status(f"Accesso avviato, salvataggio locale non riuscito: {exc}")
 
+    def reports_base_dir() -> Path:
+        if state.database_path:
+            return Path(state.database_path).parent
+        return Path.cwd() / "data"
+
+    def set_report_status(message: str) -> None:
+        if state.report_status_ref.current is not None:
+            state.report_status_ref.current.value = message
+            page.update()
+
     async def report_bug() -> None:
         report = {
             "captured_at": datetime.now(timezone.utc).isoformat(),
@@ -356,28 +384,73 @@ def main(page: ft.Page):
             "account_id": state.account_id,
             "database_path": state.database_path,
         }
-        text = json.dumps(report, ensure_ascii=False, indent=2)
-        whatsapp_url = build_whatsapp_report_url(BUG_REPORT_WHATSAPP_NUMBER, text)
+        report["report_id"] = build_report_id(report)
+        state.last_report = report
+        state.last_report_id = report["report_id"]
+        try:
+            save_report(reports_base_dir(), report)
+        except Exception as exc:
+            set_web_status(f"Report generato, salvataggio locale non riuscito: {exc}")
+        state.saved_reports = list_saved_reports(reports_base_dir())
+        if show_report_over_live_webview():
+            return
+        await go_to(ROUTE_REPORT)
+
+    async def send_report_whatsapp() -> None:
+        if not state.last_report:
+            return
+        text = build_report_text(state.last_report)
         try:
             await page.clipboard.set(text)
-            message = "Report copiato negli appunti. Incollalo nel ticket o in chat."
         except Exception:
-            message = text
+            pass
+        whatsapp_url = build_whatsapp_report_url(BUG_REPORT_WHATSAPP_NUMBER, text)
         if whatsapp_url:
             try:
                 await url_launcher.launch_url(whatsapp_url)
                 return
             except Exception:
-                message = "Non riesco ad aprire WhatsApp. Report copiato negli appunti."
-        page.show_dialog(
-            ft.AlertDialog(
-                modal=True,
-                title=ft.Text("Segnala bug"),
-                content=ft.Text(message, selectable=True),
-                actions=[
-                    ft.TextButton("Chiudi", on_click=lambda _: page.pop_dialog()),
-                ],
-            )
+                set_report_status(
+                    "Non riesco ad aprire WhatsApp. Report copiato negli appunti."
+                )
+                return
+        set_report_status("Numero WhatsApp non configurato. Report copiato negli appunti.")
+
+    async def copy_report_text() -> None:
+        if not state.last_report:
+            return
+        try:
+            await page.clipboard.set(build_report_text(state.last_report))
+            set_report_status("Report completo copiato negli appunti.")
+        except Exception as exc:
+            set_report_status(f"Copia non riuscita: {exc}")
+
+    async def copy_report_id() -> None:
+        if not state.last_report_id:
+            return
+        try:
+            await page.clipboard.set(state.last_report_id)
+            set_report_status("Codice copiato negli appunti.")
+        except Exception as exc:
+            set_report_status(f"Copia non riuscita: {exc}")
+
+    async def copy_saved_report(path: str) -> None:
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+            await page.clipboard.set(text)
+            set_report_status("Report salvato copiato negli appunti.")
+        except Exception as exc:
+            set_report_status(f"Copia non riuscita: {exc}")
+
+    def _build_report_view() -> ft.View:
+        return build_report_view(
+            page=page,
+            state=state,
+            on_back_to_diary=back_to_diary,
+            on_send_whatsapp=send_report_whatsapp,
+            on_copy_report=copy_report_text,
+            on_copy_report_id=copy_report_id,
+            on_copy_saved_report=copy_saved_report,
         )
 
     async def save_credentials() -> None:
@@ -701,6 +774,9 @@ def main(page: ft.Page):
                 )
             )
             page.drawer = None
+        elif requested_route == ROUTE_REPORT:
+            page.views.append(_build_report_view())
+            page.drawer = None
 
         page.update()
 
@@ -721,6 +797,11 @@ def main(page: ft.Page):
     async def view_pop(e: ft.ViewPopEvent) -> None:
         popped_route = e.view.route if e.view is not None else ""
         if state.session_unlocked and popped_route == ROUTE_DASHBOARD:
+            if reveal_live_webview():
+                return
+            await go_to(ROUTE_WEBVIEW)
+            return
+        if state.session_unlocked and popped_route == ROUTE_REPORT:
             if reveal_live_webview():
                 return
             await go_to(ROUTE_WEBVIEW)
