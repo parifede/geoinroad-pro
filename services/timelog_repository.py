@@ -589,6 +589,7 @@ class TimelogRepository:
         "ferie": 3,
         "permesso": 2,
         "riposo": 1,
+        "assenza": 1,
     }
 
     def _collect_day_statuses(
@@ -621,12 +622,16 @@ class TimelogRepository:
             return "ferie"
         if "permess" in text:
             return "permesso"
-        if "malatt" in text:
+        if "malatt" in text or "infortun" in text:
             return "malattia"
+        if "libero" in text or "ripos" in text:
+            return "riposo"
         if marker == "W" or "presente" in text:
             return "lavorato"
-        if marker == "R" or "libero" in text or "ripos" in text:
-            return "riposo"
+        if marker == "R":
+            # Assenza con dicitura non riconosciuta: non e' ne' lavoro
+            # ne' riposo noto, la cella la mostra come assenza generica.
+            return "assenza"
         return ""
 
     @staticmethod

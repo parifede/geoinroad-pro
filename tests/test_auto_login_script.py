@@ -88,13 +88,16 @@ class AutoLoginScriptTest(unittest.TestCase):
     def test_calendar_scraper_emits_rest_and_absence_days(self):
         script = build_auto_login_script(username="user@example.test", password="secret")
 
-        # Il pattern calendario accetta anche assenze, non solo presenze.
-        self.assertIn("Presente no route|Libero|Ferie|Permessi?|Malattia", script)
+        # Il pattern calendario cattura qualunque dicitura di stato tra il
+        # marcatore W/R e la stazione, non un elenco fisso.
+        self.assertIn("[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'. ]{0,30}?", script)
         # I giorni R non vengono piu' scartati: portano il loro stato.
         self.assertNotIn('match[4].toUpperCase() !== "W"', script)
         self.assertIn('work_marker: match[4].toUpperCase()', script)
-        # Anche l'API calendario segnala i giorni non lavorati.
+        # Anche l'API calendario segnala i giorni non lavorati, con campioni
+        # diagnostici per mappare i tipi di assenza reali.
         self.assertIn('work_marker: "R"', script)
+        self.assertIn("calendar_samples", script)
 
     def test_calendar_year_follows_nearest_month_across_new_year(self):
         script = build_auto_login_script(username="user@example.test", password="secret")

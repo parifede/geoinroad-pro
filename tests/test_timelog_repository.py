@@ -299,6 +299,9 @@ class TimelogRepositoryTest(unittest.TestCase):
                     {"label": "GIO 7 Presente no route (ROMA)", "value": 0,
                      "date": "2026-05-07", "status": "Presente no route",
                      "work_marker": "W"},
+                    {"label": "VEN 8 Congedo straord. (ROMA)", "value": 0,
+                     "date": "2026-05-08", "status": "Congedo straord.",
+                     "work_marker": "R"},
                 ],
             },
             account_id=account_id,
@@ -316,6 +319,7 @@ class TimelogRepositoryTest(unittest.TestCase):
         self.assertEqual(status_by_day["2026-05-05"], "riposo")
         self.assertEqual(status_by_day["2026-05-06"], "ferie")
         self.assertEqual(status_by_day["2026-05-07"], "lavorato")
+        self.assertEqual(status_by_day["2026-05-08"], "assenza")
         self.assertEqual(status_by_day["2026-05-09"], "")
 
         repo._clear_account_data_sync(repo.db_path, account_id)

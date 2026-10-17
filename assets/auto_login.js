@@ -350,7 +350,10 @@
     if (isCalendar) {
       const calendarHeaderMatch = bodyText.match(/\b\d{1,2}\s+([A-Za-z]{3})\s*~/i);
       const calendarDefaultMonth = calendarHeaderMatch ? calendarHeaderMatch[1] : "";
-      const calendarPattern = /\b(LUN|MAR|MER|GIO|VEN|SAB|DOM)\s+(\d{1,2})(?:\s+([A-Za-z]{3}))?\s+([WR])\s+(Presente no route|Libero|Ferie|Permessi?|Malattia)\s+\(([^)]+)\)/gi;
+      // Lo stato della giornata e' qualunque testo tra il marcatore W/R e la
+      // stazione tra parentesi: cosi' si catturano anche ferie, permessi,
+      // malattia e diciture future senza doverle elencare.
+      const calendarPattern = /\b(LUN|MAR|MER|GIO|VEN|SAB|DOM)\s+(\d{1,2})(?:\s+([A-Za-z]{3}))?\s+([WR])\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'. ]{0,30}?)\s*\(([^)]+)\)/gi;
       for (const match of bodyText.matchAll(calendarPattern)) {
         const monthLabel = match[3] || calendarDefaultMonth;
         const workDate = isoFromItalianDay(match[2], monthLabel);
@@ -611,6 +614,9 @@
       );
       const calendars = calendarPayload.employee_calendars || calendarPayload.calendars || [];
       debug.calendar_days = calendars.length;
+      debug.calendar_samples = calendars.slice(0, 3).map((item) => {
+        try { return JSON.stringify(item).slice(0, 400); } catch (_) { return "unserializable"; }
+      });
       for (const item of calendars) {
         const day = item.day || item.date;
         if (!day) continue;

@@ -416,6 +416,7 @@ _DAY_STATUS_STYLES = {
     "ferie": ("Ferie", "#FFB300"),
     "permesso": ("Perm.", "#26A69A"),
     "malattia": ("Malat.", "#AB47BC"),
+    "assenza": ("Ass.", "#78909C"),
 }
 
 
