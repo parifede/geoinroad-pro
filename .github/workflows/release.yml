@@ -1,11 +1,17 @@
 name: Release APK
 
 # Pubblica l'APK come release GitHub quando viene pushato un tag "v*"
-# (es. v1.1.0). Un tag con suffisso (es. v1.1.0-rc1) crea una pre-release.
+# (es. v1.1.0) o avviando a mano "Run workflow" con il tag desiderato.
+# Un tag con suffisso (es. v1.1.0-rc1) crea una pre-release.
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag della release (es. v1.1.0)"
+        required: true
 
 permissions:
   contents: write
@@ -41,14 +47,17 @@ jobs:
         run: flet build apk --yes --no-rich-output --skip-flutter-doctor
 
       - name: Prepara artefatto
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           mkdir -p dist
-          cp build/apk/*.apk "dist/geoinroad-pro-${GITHUB_REF_NAME}.apk"
+          cp build/apk/*.apk "dist/geoinroad-pro-${RELEASE_TAG}.apk"
           ls -lh dist
 
       - name: Pubblica release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: dist/*.apk
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(inputs.tag || github.ref_name, '-') }}
