@@ -350,26 +350,30 @@
     if (isCalendar) {
       const calendarHeaderMatch = bodyText.match(/\b\d{1,2}\s+([A-Za-z]{3})\s*~/i);
       const calendarDefaultMonth = calendarHeaderMatch ? calendarHeaderMatch[1] : "";
-      // Lo stato della giornata e' qualunque testo tra il marcatore W/R e la
-      // stazione tra parentesi: cosi' si catturano anche ferie, permessi,
-      // malattia e diciture future senza doverle elencare.
-      const calendarPattern = /\b(LUN|MAR|MER|GIO|VEN|SAB|DOM)\s+(\d{1,2})(?:\s+([A-Za-z]{3}))?\s+([WR])\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'. ]{0,30}?)\s*\(([^)]+)\)/gi;
+      // Ogni riga del calendario e': giorno, numero, SIGLA badge (S pilota,
+      // W copilota, A abortive, M malattia, I infortunio, F/FA ferie,
+      // GF festivo, R/RC riposo, altre = assenze), stato testuale e stazione.
+      // La sigla e' catturata generica (1-2 maiuscole) per coprire anche
+      // tipi non ancora noti; il testo di stato e' libero.
+      const calendarPattern = /\b(LUN|MAR|MER|GIO|VEN|SAB|DOM)\s+(\d{1,2})(?:\s+([A-Za-z]{3}))?\s+([A-Z]{1,2})\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'. ]{0,30}?)\s*\(([^)]+)\)/g;
       for (const match of bodyText.matchAll(calendarPattern)) {
         const monthLabel = match[3] || calendarDefaultMonth;
         const workDate = isoFromItalianDay(match[2], monthLabel);
+        const sigla = match[4].toUpperCase();
         const label = match[1].toUpperCase() + " " + match[2] + " " + match[5] + " (" + match[6] + ")";
         const key = workDate + "|" + label;
         if (!seenLabels.has(key)) {
           seenLabels.add(key);
           rows.push({
             label: label,
-            value: "0",
+            // Abortive: rotta soppressa ma giornata pagata 8 ore.
+            value: sigla === "A" ? "8.00" : "0",
             raw: match[0],
             date: workDate,
             station: match[6],
             status: match[5],
             day_code: match[1].toUpperCase(),
-            work_marker: match[4].toUpperCase(),
+            work_marker: sigla,
             source: "dom/calendar",
             source_url: sourceUrl,
           });
@@ -803,6 +807,19 @@
     });
   }
 
+  function isWorkedMarker(marker) {
+    const normalized = String(marker || "").toUpperCase();
+    return normalized === "W" || normalized === "S";
+  }
+
+  function shouldExpandRow(row) {
+    // Le pagine diario per-giorno servono solo per i giorni effettivamente
+    // in servizio: gli abortive (A) sono pagati 8 ore ma si resta a casa.
+    const marker = String(row.work_marker || "").toUpperCase();
+    if (marker === "A") return false;
+    return isWorkedMarker(marker) || (parseFloat(row.value || "0") || 0) > 0;
+  }
+
   function addDateUrls(queue, queued, isoDate) {
     if (!isoDate) return;
     for (const url of dateUrlsFor(isoDate)) {
@@ -910,7 +927,7 @@
       addDateUrls(queue, queued, localIsoDate(date));
     }
     for (const row of payloads[0].rows || []) {
-      if (row.work_marker === "W" || parseFloat(row.value || "0") > 0) {
+      if (shouldExpandRow(row)) {
         addDateUrls(queue, queued, row.date);
       }
     }
@@ -925,7 +942,7 @@
         if (item.payload) {
           payloads.push(item.payload);
           for (const row of item.payload.rows || []) {
-            if (row.work_marker === "W" || parseFloat(row.value || "0") > 0) {
+            if (shouldExpandRow(row)) {
               addDateUrls(queue, queued, row.date);
             }
           }
@@ -959,7 +976,7 @@
       }
       for (const payload of payloads) {
         for (const row of payload.rows || []) {
-          if (row.date && row.work_marker === "W") renderedDates.add(row.date);
+          if (row.date && isWorkedMarker(row.work_marker)) renderedDates.add(row.date);
         }
       }
       for (const day of Array.from(renderedDates).sort().reverse().slice(0, 10)) {
@@ -980,7 +997,7 @@
       if (item.payload) {
         payloads.push(item.payload);
         for (const row of item.payload.rows || []) {
-          if (row.work_marker === "W" || parseFloat(row.value || "0") > 0) {
+          if (shouldExpandRow(row)) {
             for (const url of dateUrlsFor(row.date)) {
               addRenderedUrl(url);
             }

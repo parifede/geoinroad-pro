@@ -88,12 +88,18 @@ class AutoLoginScriptTest(unittest.TestCase):
     def test_calendar_scraper_emits_rest_and_absence_days(self):
         script = build_auto_login_script(username="user@example.test", password="secret")
 
-        # Il pattern calendario cattura qualunque dicitura di stato tra il
-        # marcatore W/R e la stazione, non un elenco fisso.
+        # La sigla badge e' generica (1-2 maiuscole: S, W, A, M, I, F, FA,
+        # GF, R, RC e future) e la dicitura di stato e' testo libero.
+        self.assertIn("([A-Z]{1,2})", script)
         self.assertIn("[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'. ]{0,30}?", script)
-        # I giorni R non vengono piu' scartati: portano il loro stato.
+        # I giorni non lavorati non vengono piu' scartati: portano la sigla.
         self.assertNotIn('match[4].toUpperCase() !== "W"', script)
-        self.assertIn('work_marker: match[4].toUpperCase()', script)
+        self.assertIn("work_marker: sigla", script)
+        # Abortive = rotta soppressa ma 8 ore pagate.
+        self.assertIn('sigla === "A" ? "8.00" : "0"', script)
+        # Solo S e W (pilota/copilota) espandono le pagine diario.
+        self.assertIn("function isWorkedMarker(", script)
+        self.assertIn('if (marker === "A") return false;', script)
         # Anche l'API calendario segnala i giorni non lavorati, con campioni
         # diagnostici per mappare i tipi di assenza reali.
         self.assertIn('work_marker: "R"', script)

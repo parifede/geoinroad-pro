@@ -288,20 +288,27 @@ class TimelogRepositoryTest(unittest.TestCase):
         repo._save_snapshot_sync(
             repo.db_path,
             {
-                "captured_at": "2026-05-08T10:00:00+00:00",
+                "captured_at": "2026-05-09T10:00:00+00:00",
                 "url": "https://example.test/driver/calendar",
                 "rows": [
+                    {"label": "DOM 3 Giornata Festiva (HPI7)", "value": 0,
+                     "date": "2026-05-03", "status": "Giornata Festiva",
+                     "work_marker": "GF"},
                     {"label": "Turno 06:00-14:00", "value": 8, "date": "2026-05-04"},
-                    {"label": "MAR 5 Libero (ROMA)", "value": 0, "date": "2026-05-05",
-                     "status": "Libero", "work_marker": "R"},
-                    {"label": "MER 6 Ferie (ROMA)", "value": 0, "date": "2026-05-06",
-                     "status": "Ferie", "work_marker": "R"},
-                    {"label": "GIO 7 Presente no route (ROMA)", "value": 0,
-                     "date": "2026-05-07", "status": "Presente no route",
-                     "work_marker": "W"},
-                    {"label": "VEN 8 Congedo straord. (ROMA)", "value": 0,
-                     "date": "2026-05-08", "status": "Congedo straord.",
-                     "work_marker": "R"},
+                    {"label": "MAR 5 Libero (HPI7)", "value": 0, "date": "2026-05-05",
+                     "status": "Libero", "work_marker": "RC"},
+                    {"label": "MER 6 Ferie e ROL (HPI7)", "value": 0,
+                     "date": "2026-05-06", "status": "Ferie e ROL",
+                     "work_marker": "FA"},
+                    {"label": "GIO 7 Presente (HPI7)", "value": 0,
+                     "date": "2026-05-07", "status": "Presente",
+                     "work_marker": "S"},
+                    {"label": "VEN 8 Boh (HPI7)", "value": 0,
+                     "date": "2026-05-08", "status": "Boh",
+                     "work_marker": "NR"},
+                    {"label": "SAB 9 Abortive (HPI7)", "value": "8.00",
+                     "date": "2026-05-09", "status": "Abortive",
+                     "work_marker": "A"},
                 ],
             },
             account_id=account_id,
@@ -314,13 +321,17 @@ class TimelogRepositoryTest(unittest.TestCase):
             anchor_date="2026-05-06",
         )
         status_by_day = {item["day"]: item["status"] for item in daily}
+        totals_by_day = {item["day"]: item["total_value"] for item in daily}
 
+        self.assertEqual(status_by_day["2026-05-03"], "festivo")
         self.assertEqual(status_by_day["2026-05-04"], "lavorato")
         self.assertEqual(status_by_day["2026-05-05"], "riposo")
         self.assertEqual(status_by_day["2026-05-06"], "ferie")
         self.assertEqual(status_by_day["2026-05-07"], "lavorato")
         self.assertEqual(status_by_day["2026-05-08"], "assenza")
-        self.assertEqual(status_by_day["2026-05-09"], "")
+        # Abortive: rotta soppressa ma 8 ore pagate, contate nel totale.
+        self.assertEqual(status_by_day["2026-05-09"], "abortive")
+        self.assertAlmostEqual(totals_by_day["2026-05-09"], 8.0)
 
         repo._clear_account_data_sync(repo.db_path, account_id)
         with repo._connect(repo.db_path) as conn:

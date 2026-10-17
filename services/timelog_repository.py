@@ -536,7 +536,7 @@ class TimelogRepository:
             day_key = current.isoformat()
             values = values_by_day.get(day_key, {"total_value": 0.0, "entries": 0})
             status = status_by_day.get(day_key, "")
-            if values["total_value"] > 0:
+            if values["total_value"] > 0 and not status:
                 status = "lavorato"
             result.append(
                 {
@@ -584,10 +584,13 @@ class TimelogRepository:
         }
 
     _STATUS_RANKS = {
-        "lavorato": 4,
-        "malattia": 3,
-        "ferie": 3,
-        "permesso": 2,
+        "lavorato": 6,
+        "abortive": 5,
+        "malattia": 4,
+        "infortunio": 4,
+        "ferie": 4,
+        "permesso": 3,
+        "festivo": 2,
         "riposo": 1,
         "assenza": 1,
     }
@@ -614,23 +617,33 @@ class TimelogRepository:
         return statuses
 
     def _day_status_for_row(self, row: dict) -> str:
-        if self._coerce_value(row.get("value")) > 0:
-            return "lavorato"
+        # Sigle del calendario Geoin ROAD: S pilota, W copilota, A abortive
+        # (rotta soppressa, 8 ore pagate), M malattia, I infortunio,
+        # F ferie / FA ferie aziendali, GF giornata festiva, R riposo /
+        # RC riposo concordato. Altre sigle = assenze (non retribuita ecc.).
         marker = str(row.get("work_marker", "")).upper()
         text = f"{row.get('status', '')} {row.get('label', '')}".lower()
-        if "ferie" in text or "vacanz" in text:
+        if marker == "A" or "abortive" in text:
+            return "abortive"
+        if self._coerce_value(row.get("value")) > 0:
+            return "lavorato"
+        if marker in ("F", "FA") or "ferie" in text or "vacanz" in text:
             return "ferie"
         if "permess" in text:
             return "permesso"
-        if "malatt" in text or "infortun" in text:
+        if marker == "I" or "infortun" in text:
+            return "infortunio"
+        if marker == "M" or "malatt" in text:
             return "malattia"
-        if "libero" in text or "ripos" in text:
+        if marker == "GF" or "festiv" in text:
+            return "festivo"
+        if marker in ("R", "RC") or "libero" in text or "ripos" in text:
             return "riposo"
-        if marker == "W" or "presente" in text:
+        if marker in ("W", "S") or "presente" in text:
             return "lavorato"
-        if marker == "R":
-            # Assenza con dicitura non riconosciuta: non e' ne' lavoro
-            # ne' riposo noto, la cella la mostra come assenza generica.
+        if marker:
+            # Sigla non riconosciuta (es. assenza non retribuita o
+            # ingiustificata): la cella la mostra come assenza generica.
             return "assenza"
         return ""
 

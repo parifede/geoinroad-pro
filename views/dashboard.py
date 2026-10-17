@@ -310,7 +310,9 @@ def _chart_card(daily_totals: list[dict], period: str) -> ft.Control:
                 ),
                 content,
                 ft.Text(
-                    "Rosa: ore lavorate · Riposo · Ferie · Perm. · Malat.",
+                    "Verde: lavorato (chiaro = abortive) · Blu: riposo · "
+                    "Giallo: ferie · Arancio: festivo · Rosso: malattia/infortunio · "
+                    "Grigio: assenza",
                     size=10,
                     color=_MUTED,
                     visible=bool(daily_totals),
@@ -411,12 +413,19 @@ def _month_grid(daily_totals: list[dict]) -> ft.Control:
     )
 
 
+# Colori allineati al calendario del portale Geoin ROAD:
+# verde presenti, verde chiaro abortive, blu riposi, giallo ferie,
+# arancio festivi, rosso malattia/infortunio, grigio altre assenze.
+_WORKED_COLOR = "#388E3C"
+_ABORTIVE_COLOR = "#81C784"
 _DAY_STATUS_STYLES = {
-    "riposo": ("Riposo", "#90A4AE"),
-    "ferie": ("Ferie", "#FFB300"),
+    "riposo": ("Riposo", "#1E88E5"),
+    "ferie": ("Ferie", "#FBC02D"),
     "permesso": ("Perm.", "#26A69A"),
-    "malattia": ("Malat.", "#AB47BC"),
-    "assenza": ("Ass.", "#78909C"),
+    "malattia": ("Malat.", "#E53935"),
+    "infortunio": ("Infort.", "#C62828"),
+    "festivo": ("Festivo", "#FB8C00"),
+    "assenza": ("Ass.", "#757575"),
 }
 
 
@@ -428,7 +437,7 @@ def _month_day_cell(item: dict, max_val: float) -> ft.Control:
     status_style = _DAY_STATUS_STYLES.get(status) if val <= 0 else None
 
     if val > 0:
-        bar_color = _ACCENT
+        bar_color = _ABORTIVE_COLOR if status == "abortive" else _WORKED_COLOR
         bar_opacity = max(0.25, fill_ratio)
         bottom_text = _fmt_h(val)
         bottom_color = _TEXT
