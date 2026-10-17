@@ -1,0 +1,54 @@
+name: Release APK
+
+# Pubblica l'APK come release GitHub quando viene pushato un tag "v*"
+# (es. v1.1.0). Un tag con suffisso (es. v1.1.0-rc1) crea una pre-release.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Installa dipendenze
+        run: |
+          pip install -r requirements.txt
+          pip install flet-cli==0.84.0
+
+      - name: Test
+        run: python -m unittest discover -s tests
+
+      # flet build scarica da solo il Flutter SDK richiesto (3.41.x)
+      # e il toolchain Android mancante grazie a --yes.
+      - name: Build APK
+        run: flet build apk --yes --no-rich-output --skip-flutter-doctor
+
+      - name: Prepara artefatto
+        run: |
+          mkdir -p dist
+          cp build/apk/*.apk "dist/geoinroad-pro-${GITHUB_REF_NAME}.apk"
+          ls -lh dist
+
+      - name: Pubblica release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

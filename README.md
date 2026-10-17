@@ -70,6 +70,23 @@ Esegui i test:
 .\.uv-venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
+## Distribuzione
+
+L'APK viene costruito e pubblicato automaticamente da GitHub Actions a ogni
+tag `v*`. Per rilasciare una nuova versione:
+
+```bash
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+Dopo circa 20 minuti l'APK compare nella pagina
+[Releases](https://github.com/parifede/geoinroad-pro/releases): basta
+condividere il link ai colleghi, che possono scaricarlo e installarlo
+direttamente (serve consentire l'installazione da origini sconosciute).
+Un tag con suffisso, ad esempio `v1.2.0-rc1`, viene pubblicato come
+pre-release di prova.
+
 ## Note
 
 Questo progetto non e un prodotto ufficiale Geoin ROAD. E un caso studio pratico su come migliorare l'esperienza mobile di un portale gia esistente senza modificarne il backend.
