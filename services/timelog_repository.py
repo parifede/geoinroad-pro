@@ -244,7 +244,7 @@ class TimelogRepository:
         account_id: str = "default",
     ) -> None:
         captured_at = payload.get("captured_at") or datetime.now(timezone.utc).isoformat()
-        capture_day = max(
+        capture_day = min(
             self._parse_date(str(captured_at)) or date.today(),
             date.today(),
         )

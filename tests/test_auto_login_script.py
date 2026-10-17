@@ -18,6 +18,23 @@ class AutoLoginScriptTest(unittest.TestCase):
         self.assertIn("window.GeoinroadApp.collectStats", script)
         self.assertNotIn("window.GeoinroadApp.collectStats();", script)
 
+    def test_autologin_submits_once_without_duplicate_native_submit(self):
+        script = build_auto_login_script(username="user@example.test", password="secret")
+
+        self.assertIn("submitButton.click();", script)
+        self.assertNotIn('dispatchEvent(new MouseEvent("click"', script)
+        self.assertNotIn("form.requestSubmit(submitButton || undefined)", script)
+
+    def test_autologin_runs_only_on_login_page_with_attempt_limit(self):
+        script = build_auto_login_script(username="user@example.test", password="secret")
+
+        self.assertIn("loginPathPattern", script)
+        self.assertIn("skipped_not_login_page", script)
+        self.assertIn("autologin_max_attempts", script)
+        self.assertIn("maxAttempts = 3", script)
+        self.assertIn("__geoinroadAutologinRan", script)
+        self.assertIn("scheduleAutoLogin();", script)
+
     def test_stats_scraper_normalizes_dash_variants_and_start_end_labels(self):
         script = build_auto_login_script(username="user@example.test", password="secret")
 

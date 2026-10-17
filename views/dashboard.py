@@ -217,7 +217,10 @@ def _chart_card(daily_totals: list[dict], period: str) -> ft.Control:
             spacing=14,
             controls=[
                 ft.Text(
-                    _chart_title(period),
+                    _chart_title(
+                        period,
+                        daily_totals[0].get("day") if daily_totals else None,
+                    ),
                     size=15,
                     weight=ft.FontWeight.W_700,
                     color=_TEXT,

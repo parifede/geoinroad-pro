@@ -6,6 +6,9 @@
   const actionPrefix = "GEOINROAD_APP::ACTION::";
   const errorPrefix = "GEOINROAD_APP::ERROR::";
   const sessionKey = "geoinroad_pro_autologin_ts";
+  const attemptsKey = "geoinroad_pro_autologin_attempts";
+  const maxAttempts = 3;
+  const loginPathPattern = /\/login/i;
 
   function emit(prefix, payload) {
     try {
@@ -57,7 +60,97 @@
     element.dispatchEvent(new Event("blur", { bubbles: true }));
   }
 
+  function readIntKey(key) {
+    try {
+      return parseInt(sessionStorage.getItem(key) || "0", 10) || 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  function writeKey(key, value) {
+    try {
+      sessionStorage.setItem(key, String(value));
+    } catch (_) {}
+  }
+
+  function clearAutologinState() {
+    try {
+      sessionStorage.removeItem(sessionKey);
+      sessionStorage.removeItem(attemptsKey);
+    } catch (_) {}
+  }
+
+  function submitLoginForm(userInput, passwordInput) {
+    const submitButton = Array.from(
+      document.querySelectorAll('button[type="submit"], input[type="submit"], button')
+    ).find((element) => {
+      const text = (element.innerText || element.value || "").trim();
+      return visible(element) && /login|sign\s*in|accedi|entra/i.test(text || "submit");
+    });
+
+    const form = passwordInput.form || userInput.form;
+
+    if (!submitButton && !form) {
+      emit(statusPrefix, {
+        stage: "autologin",
+        action: "form_not_submitted",
+        pathname: window.location.pathname,
+      });
+      return;
+    }
+
+    setTimeout(() => {
+      if (userInput.value !== username) setInputValue(userInput, username);
+      if (passwordInput.value !== password) setInputValue(passwordInput, password);
+      if (submitButton) {
+        submitButton.click();
+      } else if (form && typeof form.requestSubmit === "function") {
+        try { form.requestSubmit(); } catch (_) {
+          try { form.submit(); } catch (_2) {}
+        }
+      } else if (form) {
+        try { form.submit(); } catch (_) {}
+      }
+    }, 300);
+    emit(statusPrefix, {
+      stage: "autologin",
+      action: submitButton ? "submit_clicked" : "form_submitted",
+      pathname: window.location.pathname,
+    });
+  }
+
   function tryAutoLogin() {
+    if (!loginPathPattern.test(window.location.pathname)) {
+      clearAutologinState();
+      emit(statusPrefix, {
+        stage: "autologin",
+        action: "skipped_not_login_page",
+        pathname: window.location.pathname,
+      });
+      return false;
+    }
+
+    if (window.__geoinroadAutologinRan) {
+      emit(statusPrefix, {
+        stage: "autologin",
+        action: "already_ran_in_page",
+        pathname: window.location.pathname,
+      });
+      return true;
+    }
+
+    const attempts = readIntKey(attemptsKey);
+    if (attempts >= maxAttempts) {
+      emit(statusPrefix, {
+        stage: "autologin",
+        action: "autologin_max_attempts",
+        attempts: attempts,
+        pathname: window.location.pathname,
+      });
+      return true;
+    }
+
     const userInput = findUsernameInput();
     const passwordInput = findPasswordInput();
 
@@ -79,7 +172,7 @@
       pathname: window.location.pathname,
     });
 
-    const lastTs = parseInt(sessionStorage.getItem(sessionKey) || "0");
+    const lastTs = readIntKey(sessionKey);
     const now = Date.now();
     if (now - lastTs < 15000) {
       emit(statusPrefix, {
@@ -91,42 +184,23 @@
       return true;
     }
 
-    const submitButton = Array.from(
-      document.querySelectorAll('button[type="submit"], input[type="submit"], button')
-    ).find((element) => {
-      const text = (element.innerText || element.value || "").trim();
-      return visible(element) && /login|sign\s*in|accedi|entra/i.test(text || "submit");
-    });
-
-    const form = passwordInput.form || userInput.form;
-
-    if (submitButton || form) {
-      sessionStorage.setItem(sessionKey, String(now));
-      setTimeout(() => {
-        if (submitButton) {
-          submitButton.click();
-          submitButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-        }
-        if (form) {
-          try { form.requestSubmit(submitButton || undefined); } catch (_) {
-            try { form.submit(); } catch (_2) {}
-          }
-        }
-      }, 300);
-      emit(statusPrefix, {
-        stage: "autologin",
-        action: submitButton ? "submit_clicked" : "form_submitted",
-        pathname: window.location.pathname,
-      });
-      return true;
-    }
-
-    emit(statusPrefix, {
-      stage: "autologin",
-      action: "form_not_submitted",
-      pathname: window.location.pathname,
-    });
+    window.__geoinroadAutologinRan = true;
+    writeKey(sessionKey, now);
+    writeKey(attemptsKey, attempts + 1);
+    submitLoginForm(userInput, passwordInput);
     return true;
+  }
+
+  function scheduleAutoLogin() {
+    if (tryAutoLogin()) return;
+    if (!loginPathPattern.test(window.location.pathname)) return;
+    let retries = 0;
+    const timerId = setInterval(() => {
+      retries += 1;
+      if (tryAutoLogin() || retries >= 20) {
+        clearInterval(timerId);
+      }
+    }, 500);
   }
 
   function extractCandidateStats(doc = document, sourceUrl = window.location.href, sourceTitle = document.title) {
@@ -901,7 +975,7 @@
   };
 
   try {
-    tryAutoLogin();
+    scheduleAutoLogin();
   } catch (error) {
     emit(errorPrefix, {
       stage: "bootstrap",
