@@ -297,9 +297,9 @@ class TimelogRepositoryTest(unittest.TestCase):
                     {"label": "Turno 06:00-14:00", "value": 8, "date": "2026-05-04"},
                     {"label": "MAR 5 Libero (HPI7)", "value": 0, "date": "2026-05-05",
                      "status": "Libero", "work_marker": "RC"},
-                    {"label": "MER 6 Ferie e ROL (HPI7)", "value": 0,
+                    {"label": "MER 6 Ferie e ROL (HPI7)", "value": "8.00",
                      "date": "2026-05-06", "status": "Ferie e ROL",
-                     "work_marker": "FA"},
+                     "work_marker": "FA", "source": "dom/calendar-default"},
                     {"label": "GIO 7 Presente (HPI7)", "value": 0,
                      "date": "2026-05-07", "status": "Presente",
                      "work_marker": "S"},
@@ -326,10 +326,11 @@ class TimelogRepositoryTest(unittest.TestCase):
         self.assertEqual(status_by_day["2026-05-03"], "festivo")
         self.assertEqual(status_by_day["2026-05-04"], "lavorato")
         self.assertEqual(status_by_day["2026-05-05"], "riposo")
-        self.assertEqual(status_by_day["2026-05-06"], "ferie")
         self.assertEqual(status_by_day["2026-05-07"], "lavorato")
         self.assertEqual(status_by_day["2026-05-08"], "assenza")
-        # Abortive: rotta soppressa ma 8 ore pagate, contate nel totale.
+        # Ferie e abortive: 8 ore pagate, contate nel totale.
+        self.assertEqual(status_by_day["2026-05-06"], "ferie")
+        self.assertAlmostEqual(totals_by_day["2026-05-06"], 8.0)
         self.assertEqual(status_by_day["2026-05-09"], "abortive")
         self.assertAlmostEqual(totals_by_day["2026-05-09"], 8.0)
 

@@ -625,10 +625,10 @@ class TimelogRepository:
         text = f"{row.get('status', '')} {row.get('label', '')}".lower()
         if marker == "A" or "abortive" in text:
             return "abortive"
-        if self._coerce_value(row.get("value")) > 0:
-            return "lavorato"
         if marker in ("F", "FA") or "ferie" in text or "vacanz" in text:
             return "ferie"
+        if self._coerce_value(row.get("value")) > 0:
+            return "lavorato"
         if "permess" in text:
             return "permesso"
         if marker == "I" or "infortun" in text:

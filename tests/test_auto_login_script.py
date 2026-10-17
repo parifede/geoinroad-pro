@@ -95,11 +95,15 @@ class AutoLoginScriptTest(unittest.TestCase):
         # I giorni non lavorati non vengono piu' scartati: portano la sigla.
         self.assertNotIn('match[4].toUpperCase() !== "W"', script)
         self.assertIn("work_marker: sigla", script)
-        # Abortive = rotta soppressa ma 8 ore pagate.
-        self.assertIn('sigla === "A" ? "8.00" : "0"', script)
+        # Presenze senza orario, abortive e ferie valgono 8 ore pagate di
+        # default; l'orario reale vince perche' il default ha priorita' minima.
+        self.assertIn('/^(S|W|A|F|FA)$/.test(sigla)', script)
+        self.assertIn('paidDefault ? "8.00" : "0"', script)
+        self.assertIn('"dom/calendar-default"', script)
+        self.assertIn("/-default/i.test(source)) return 5;", script)
         # Solo S e W (pilota/copilota) espandono le pagine diario.
         self.assertIn("function isWorkedMarker(", script)
-        self.assertIn('if (marker === "A") return false;', script)
+        self.assertIn("if (marker) return isWorkedMarker(marker);", script)
         # Anche l'API calendario segnala i giorni non lavorati, con campioni
         # diagnostici per mappare i tipi di assenza reali.
         self.assertIn('work_marker: "R"', script)

@@ -310,9 +310,9 @@ def _chart_card(daily_totals: list[dict], period: str) -> ft.Control:
                 ),
                 content,
                 ft.Text(
-                    "Verde: lavorato (chiaro = abortive) · Blu: riposo · "
-                    "Giallo: ferie · Arancio: festivo · Rosso: malattia/infortunio · "
-                    "Grigio: assenza",
+                    "Verde: lavorato · Verde chiaro: abortive (8 h) · "
+                    "Giallo: ferie (8 h) · Blu: riposo · Arancio: festivo · "
+                    "Rosso: malattia/infortunio · Grigio: assenza",
                     size=10,
                     color=_MUTED,
                     visible=bool(daily_totals),
@@ -437,7 +437,12 @@ def _month_day_cell(item: dict, max_val: float) -> ft.Control:
     status_style = _DAY_STATUS_STYLES.get(status) if val <= 0 else None
 
     if val > 0:
-        bar_color = _ABORTIVE_COLOR if status == "abortive" else _WORKED_COLOR
+        if status == "abortive":
+            bar_color = _ABORTIVE_COLOR
+        elif status == "ferie":
+            bar_color = _DAY_STATUS_STYLES["ferie"][1]
+        else:
+            bar_color = _WORKED_COLOR
         bar_opacity = max(0.25, fill_ratio)
         bottom_text = _fmt_h(val)
         bottom_color = _TEXT

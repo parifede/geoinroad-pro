@@ -360,21 +360,24 @@
         const monthLabel = match[3] || calendarDefaultMonth;
         const workDate = isoFromItalianDay(match[2], monthLabel);
         const sigla = match[4].toUpperCase();
+        // Giornate pagate di default 8 ore: presenze (S/W) senza orario
+        // estratto, abortive (A) e ferie (F/FA). L'orario reale letto dal
+        // portale vince sempre perche' queste righe hanno priorita' minima.
+        const paidDefault = /^(S|W|A|F|FA)$/.test(sigla);
         const label = match[1].toUpperCase() + " " + match[2] + " " + match[5] + " (" + match[6] + ")";
         const key = workDate + "|" + label;
         if (!seenLabels.has(key)) {
           seenLabels.add(key);
           rows.push({
             label: label,
-            // Abortive: rotta soppressa ma giornata pagata 8 ore.
-            value: sigla === "A" ? "8.00" : "0",
+            value: paidDefault ? "8.00" : "0",
             raw: match[0],
             date: workDate,
             station: match[6],
             status: match[5],
             day_code: match[1].toUpperCase(),
             work_marker: sigla,
-            source: "dom/calendar",
+            source: paidDefault ? "dom/calendar-default" : "dom/calendar",
             source_url: sourceUrl,
           });
         }
@@ -640,12 +643,12 @@
         } else if (item.present) {
           rows.push({
             label: "Presente no route",
-            value: "0",
+            value: "8.00",
             raw: "driver_calendar " + day,
             date: day,
             status: "Presente no route",
             work_marker: "W",
-            source: "geoinroad_api/employees/driver_calendar",
+            source: "geoinroad_api/employees/driver_calendar-default",
           });
         } else {
           const absence = String(
@@ -814,10 +817,10 @@
 
   function shouldExpandRow(row) {
     // Le pagine diario per-giorno servono solo per i giorni effettivamente
-    // in servizio: gli abortive (A) sono pagati 8 ore ma si resta a casa.
+    // in servizio (S/W): abortive e ferie sono pagati 8 ore ma senza turno.
     const marker = String(row.work_marker || "").toUpperCase();
-    if (marker === "A") return false;
-    return isWorkedMarker(marker) || (parseFloat(row.value || "0") || 0) > 0;
+    if (marker) return isWorkedMarker(marker);
+    return (parseFloat(row.value || "0") || 0) > 0;
   }
 
   function addDateUrls(queue, queued, isoDate) {
@@ -899,6 +902,8 @@
   function rowPriority(row) {
     const source = String(row.source || "");
     const sourceUrl = String(row.source_url || "");
+    // Le 8 ore di default perdono contro qualunque orario reale.
+    if (/-default/i.test(source)) return 5;
     if (/dom\/keyword/i.test(source)) return 10;
     if (/planner\/route/i.test(source) || /\/driver\/route\//i.test(sourceUrl)) return 20;
     if (/driver_calendar/i.test(source)) return 80;
