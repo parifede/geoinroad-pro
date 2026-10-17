@@ -421,6 +421,17 @@ def main(page: ft.Page):
             "last_stats_debug": state.last_stats_debug,
             "account_id": state.account_id,
             "database_path": state.database_path,
+            "dashboard_period": state.dashboard_period,
+            "dashboard_anchor": state.dashboard_anchor,
+            "period_summary": state.timelog_period_summary,
+            "daily_totals": [
+                {
+                    "day": item.get("day", ""),
+                    "h": item.get("total_value", 0),
+                    "s": item.get("status", ""),
+                }
+                for item in (state.timelog_daily_totals or [])
+            ],
         }
         report["report_id"] = build_report_id(report)
         state.last_report = report

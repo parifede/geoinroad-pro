@@ -764,7 +764,8 @@ class TimelogRepository:
         if period == "year":
             return date(anchor.year, 1, 1), date(anchor.year, 12, 31)
 
-        start = anchor - timedelta(days=(anchor.weekday() + 1) % 7)
+        # Settimana del portale Geoin ROAD: lunedi' -> domenica.
+        start = anchor - timedelta(days=anchor.weekday())
         return start, start + timedelta(days=6)
 
     @staticmethod

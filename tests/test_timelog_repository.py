@@ -162,10 +162,10 @@ class TimelogRepositoryTest(unittest.TestCase):
             "rows": [
                 {"label": "oggi", "value": "8", "raw": "oggi", "date": "2026-05-04"},
                 {"label": "settimana", "value": "7", "raw": "settimana", "date": "2026-05-06"},
-                {"label": "domenica inclusa", "value": "3", "raw": "domenica", "date": "2026-05-03"},
+                {"label": "domenica precedente esclusa", "value": "3", "raw": "domenica", "date": "2026-05-03"},
                 {"label": "mese", "value": "6", "raw": "mese", "date": "2026-04-20"},
                 {"label": "anno", "value": "5", "raw": "anno", "date": "2026-01-15"},
-                {"label": "domenica successiva esclusa", "value": "9", "raw": "domenica", "date": "2026-05-10"},
+                {"label": "domenica finale inclusa", "value": "9", "raw": "domenica", "date": "2026-05-10"},
                 {"label": "vecchio", "value": "4", "raw": "vecchio", "date": "2025-12-31"},
             ],
         }
@@ -181,7 +181,7 @@ class TimelogRepositoryTest(unittest.TestCase):
             repo._fetch_period_summary_sync(
                 repo.db_path, account_id=account_id, period="week", anchor_date="2026-05-04"
             )["total_value"],
-            18,
+            24,
         )
         self.assertAlmostEqual(
             repo._fetch_period_summary_sync(
@@ -241,13 +241,13 @@ class TimelogRepositoryTest(unittest.TestCase):
         repo._save_snapshot_sync(
             repo.db_path,
             {
-                "captured_at": "2026-05-09T08:00:00+00:00",
+                "captured_at": "2026-05-11T08:00:00+00:00",
                 "url": "https://geoinroad.dimetior.com/driver/calendar",
                 "rows": [
-                    {"label": "Domenica", "value": 1, "date": "2026-05-03"},
+                    {"label": "Domenica precedente", "value": 1, "date": "2026-05-03"},
                     {"label": "Mercoledi", "value": 8.5, "date": "2026-05-06"},
                     {"label": "Sabato", "value": 7, "date": "2026-05-09"},
-                    {"label": "Fuori settimana", "value": 9, "date": "2026-05-10"},
+                    {"label": "Domenica finale", "value": 9, "date": "2026-05-10"},
                 ],
             },
             account_id=account_id,
@@ -268,11 +268,12 @@ class TimelogRepositoryTest(unittest.TestCase):
 
         self.assertEqual([item["day"] for item in day], ["2026-05-06"])
         self.assertEqual(day[0]["total_value"], 8.5)
-        self.assertEqual(week[0]["day"], "2026-05-03")
-        self.assertEqual(week[-1]["day"], "2026-05-09")
+        # Settimana lunedi' -> domenica, come il portale.
+        self.assertEqual(week[0]["day"], "2026-05-04")
+        self.assertEqual(week[-1]["day"], "2026-05-10")
         self.assertEqual(
             [item["total_value"] for item in week],
-            [1.0, 0.0, 0.0, 8.5, 0.0, 0.0, 7.0],
+            [0.0, 0.0, 8.5, 0.0, 0.0, 7.0, 9.0],
         )
 
     def test_day_states_are_saved_and_returned_with_daily_totals(self):
@@ -288,11 +289,11 @@ class TimelogRepositoryTest(unittest.TestCase):
         repo._save_snapshot_sync(
             repo.db_path,
             {
-                "captured_at": "2026-05-09T10:00:00+00:00",
+                "captured_at": "2026-05-10T10:00:00+00:00",
                 "url": "https://example.test/driver/calendar",
                 "rows": [
-                    {"label": "DOM 3 Giornata Festiva (HPI7)", "value": 0,
-                     "date": "2026-05-03", "status": "Giornata Festiva",
+                    {"label": "DOM 10 Giornata Festiva (HPI7)", "value": 0,
+                     "date": "2026-05-10", "status": "Giornata Festiva",
                      "work_marker": "GF"},
                     {"label": "Turno 06:00-14:00", "value": 8, "date": "2026-05-04"},
                     {"label": "MAR 5 Libero (HPI7)", "value": 0, "date": "2026-05-05",
@@ -323,7 +324,7 @@ class TimelogRepositoryTest(unittest.TestCase):
         status_by_day = {item["day"]: item["status"] for item in daily}
         totals_by_day = {item["day"]: item["total_value"] for item in daily}
 
-        self.assertEqual(status_by_day["2026-05-03"], "festivo")
+        self.assertEqual(status_by_day["2026-05-10"], "festivo")
         self.assertEqual(status_by_day["2026-05-04"], "lavorato")
         self.assertEqual(status_by_day["2026-05-05"], "riposo")
         self.assertEqual(status_by_day["2026-05-07"], "lavorato")
