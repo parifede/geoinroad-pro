@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import flet as ft
@@ -147,7 +147,7 @@ def main(page: ft.Page):
         await ensure_timelog_repository()
         if not state.database_path:
             return
-        today = date.today().isoformat()
+        anchor = state.dashboard_anchor or date.today().isoformat()
         if state.dashboard_period == "year":
             state.dashboard_period = "month"
         state.timelog_summary = await state.timelog_repository.fetch_summary(
@@ -156,7 +156,7 @@ def main(page: ft.Page):
         state.timelog_period_summary = await state.timelog_repository.fetch_period_summary(
             account_id=state.account_id,
             period=state.dashboard_period,
-            anchor_date=today,
+            anchor_date=anchor,
         )
         state.timelog_recent_entries = await state.timelog_repository.fetch_recent_entries(
             limit=10,
@@ -165,7 +165,7 @@ def main(page: ft.Page):
         state.timelog_daily_totals = await state.timelog_repository.fetch_period_daily_totals(
             account_id=state.account_id,
             period=state.dashboard_period,
-            anchor_date=today,
+            anchor_date=anchor,
         )
 
     async def start_background_stats_sync() -> None:
@@ -242,6 +242,8 @@ def main(page: ft.Page):
                 state=state,
                 on_back_to_diary=back_to_diary,
                 on_period_change=set_dashboard_period,
+                on_shift_period=shift_dashboard_period,
+                on_reset_period=reset_dashboard_period,
             ),
         )
 
@@ -281,6 +283,42 @@ def main(page: ft.Page):
         if period == "year":
             period = "month"
         state.dashboard_period = period
+        await refresh_timelog_data()
+        if page.route == ROUTE_DASHBOARD and show_dashboard_over_live_webview():
+            return
+        build_views()
+
+    async def shift_dashboard_period(delta: int) -> None:
+        anchor = (
+            state.timelog_repository._parse_date(state.dashboard_anchor)
+            or date.today()
+        )
+        period = state.dashboard_period
+        if period == "day":
+            anchor += timedelta(days=delta)
+        elif period == "week":
+            anchor += timedelta(days=7 * delta)
+        else:
+            month_index = anchor.month - 1 + delta
+            year = anchor.year + month_index // 12
+            month = month_index % 12 + 1
+            first_of_next = (
+                date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+            )
+            last_day = (first_of_next - timedelta(days=1)).day
+            anchor = date(year, month, min(anchor.day, last_day))
+        state.dashboard_anchor = (
+            "" if anchor == date.today() else anchor.isoformat()
+        )
+        await refresh_timelog_data()
+        if page.route == ROUTE_DASHBOARD and show_dashboard_over_live_webview():
+            return
+        build_views()
+
+    async def reset_dashboard_period() -> None:
+        if not state.dashboard_anchor:
+            return
+        state.dashboard_anchor = ""
         await refresh_timelog_data()
         if page.route == ROUTE_DASHBOARD and show_dashboard_over_live_webview():
             return
@@ -775,6 +813,8 @@ def main(page: ft.Page):
                     state=state,
                     on_back_to_diary=back_to_diary,
                     on_period_change=set_dashboard_period,
+                    on_shift_period=shift_dashboard_period,
+                    on_reset_period=reset_dashboard_period,
                 )
             )
             page.drawer = None

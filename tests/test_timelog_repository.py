@@ -275,6 +275,57 @@ class TimelogRepositoryTest(unittest.TestCase):
             [1.0, 0.0, 0.0, 8.5, 0.0, 0.0, 7.0],
         )
 
+    def test_day_states_are_saved_and_returned_with_daily_totals(self):
+        repo = TimelogRepository()
+        test_dir = Path.cwd() / "tmp-test"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        repo.db_path = test_dir / "geoinroad_pro_day_states_test.sqlite3"
+        if repo.db_path.exists():
+            repo.db_path.unlink()
+        repo._ensure_schema()
+        account_id = "acct_states"
+
+        repo._save_snapshot_sync(
+            repo.db_path,
+            {
+                "captured_at": "2026-05-08T10:00:00+00:00",
+                "url": "https://example.test/driver/calendar",
+                "rows": [
+                    {"label": "Turno 06:00-14:00", "value": 8, "date": "2026-05-04"},
+                    {"label": "MAR 5 Libero (ROMA)", "value": 0, "date": "2026-05-05",
+                     "status": "Libero", "work_marker": "R"},
+                    {"label": "MER 6 Ferie (ROMA)", "value": 0, "date": "2026-05-06",
+                     "status": "Ferie", "work_marker": "R"},
+                    {"label": "GIO 7 Presente no route (ROMA)", "value": 0,
+                     "date": "2026-05-07", "status": "Presente no route",
+                     "work_marker": "W"},
+                ],
+            },
+            account_id=account_id,
+        )
+
+        daily = repo._fetch_period_daily_totals_sync(
+            repo.db_path,
+            account_id=account_id,
+            period="week",
+            anchor_date="2026-05-06",
+        )
+        status_by_day = {item["day"]: item["status"] for item in daily}
+
+        self.assertEqual(status_by_day["2026-05-04"], "lavorato")
+        self.assertEqual(status_by_day["2026-05-05"], "riposo")
+        self.assertEqual(status_by_day["2026-05-06"], "ferie")
+        self.assertEqual(status_by_day["2026-05-07"], "lavorato")
+        self.assertEqual(status_by_day["2026-05-09"], "")
+
+        repo._clear_account_data_sync(repo.db_path, account_id)
+        with repo._connect(repo.db_path) as conn:
+            remaining = conn.execute(
+                "SELECT COUNT(*) FROM day_states WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()[0]
+        self.assertEqual(remaining, 0)
+
     def test_one_time_cleanup_removes_legacy_keyword_and_implausible_rows(self):
         repo = TimelogRepository()
         test_dir = Path.cwd() / "tmp-test"

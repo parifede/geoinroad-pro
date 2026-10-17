@@ -59,6 +59,74 @@ class DashboardTest(unittest.TestCase):
     def test_month_chart_title_names_current_month(self):
         self.assertEqual(_chart_title("month", "2026-05-05"), "Mese maggio")
 
+    def test_day_cells_mark_rest_and_vacation_days(self):
+        state = AppState()
+        state.dashboard_period = "week"
+        state.timelog_daily_totals = [
+            {"day": "2026-05-04", "total_value": 8, "entries": 1, "status": "lavorato"},
+            {"day": "2026-05-05", "total_value": 0, "entries": 0, "status": "riposo"},
+            {"day": "2026-05-06", "total_value": 0, "entries": 0, "status": "ferie"},
+            {"day": "2026-05-07", "total_value": 0, "entries": 0, "status": ""},
+        ]
+
+        labels = _collect_text_values(
+            build_dashboard_view(
+                page=_DummyPage(),
+                state=state,
+                on_back_to_diary=_noop,
+                on_period_change=_noop,
+                on_shift_period=_noop,
+                on_reset_period=_noop,
+            )
+        )
+
+        self.assertIn("Riposo", labels)
+        self.assertIn("Ferie", labels)
+        self.assertIn("0 h", labels)
+
+    def test_period_navigation_shows_anchored_range(self):
+        state = AppState()
+        state.dashboard_period = "month"
+        state.dashboard_anchor = "2026-05-05"
+        state.timelog_period_summary = {
+            "period": "month",
+            "start_date": "2026-05-01",
+            "end_date": "2026-05-31",
+        }
+
+        view = build_dashboard_view(
+            page=_DummyPage(),
+            state=state,
+            on_back_to_diary=_noop,
+            on_period_change=_noop,
+            on_shift_period=_noop,
+            on_reset_period=_noop,
+        )
+
+        labels = _collect_text_values(view)
+        self.assertIn("Maggio 2026", labels)
+
+    def test_period_navigation_week_range_label(self):
+        state = AppState()
+        state.dashboard_period = "week"
+        state.timelog_period_summary = {
+            "period": "week",
+            "start_date": "2026-05-03",
+            "end_date": "2026-05-09",
+        }
+
+        labels = _collect_text_values(
+            build_dashboard_view(
+                page=_DummyPage(),
+                state=state,
+                on_back_to_diary=_noop,
+                on_period_change=_noop,
+                on_shift_period=_noop,
+                on_reset_period=_noop,
+            )
+        )
+        self.assertIn("03/05 – 09/05", labels)
+
     def test_month_chart_shows_all_calendar_days_without_year_filter(self):
         state = AppState()
         state.dashboard_period = "month"

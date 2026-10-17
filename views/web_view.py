@@ -82,7 +82,6 @@ def build_web_view(
             bgcolor=_ACCENT,
             content=ft.SafeArea(
                 expand=True,
-                avoid_intrusions_bottom=False,
                 content=webview_stack,
             ),
         )

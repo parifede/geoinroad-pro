@@ -28,6 +28,8 @@ def build_dashboard_view(
     state: AppState,
     on_back_to_diary: Callable[[], Awaitable[None]],
     on_period_change: Callable[[str], Awaitable[None]],
+    on_shift_period: Callable[[int], Awaitable[None]] | None = None,
+    on_reset_period: Callable[[], Awaitable[None]] | None = None,
 ) -> ft.View:
     return ft.View(
         route=ROUTE_DASHBOARD,
@@ -51,7 +53,9 @@ def build_dashboard_view(
                                 controls=[
                                     ft.Container(height=20),
                                     _period_filter(page, state, on_period_change),
-                                    ft.Container(height=16),
+                                    ft.Container(height=10),
+                                    _period_nav(page, state, on_shift_period, on_reset_period),
+                                    ft.Container(height=10),
                                     _metrics_row(state),
                                     ft.Container(height=16),
                                     _chart_card(state.timelog_daily_totals, state.dashboard_period),
@@ -163,6 +167,85 @@ def _period_filter(
     )
 
 
+def _period_nav(
+    page: ft.Page,
+    state: AppState,
+    on_shift_period: Callable[[int], Awaitable[None]] | None,
+    on_reset_period: Callable[[], Awaitable[None]] | None,
+) -> ft.Control:
+    is_anchored_elsewhere = bool(state.dashboard_anchor)
+    label = ft.Text(
+        _period_range_label(state),
+        size=13,
+        weight=ft.FontWeight.W_700,
+        color=_ACCENT if is_anchored_elsewhere else _TEXT,
+        text_align=ft.TextAlign.CENTER,
+    )
+    return ft.Container(
+        padding=ft.padding.symmetric(horizontal=16),
+        content=ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.IconButton(
+                    icon=ft.Icons.CHEVRON_LEFT,
+                    icon_color=_TEXT,
+                    tooltip="Periodo precedente",
+                    on_click=lambda _: (
+                        page.run_task(on_shift_period, -1)
+                        if on_shift_period is not None
+                        else None
+                    ),
+                ),
+                ft.Container(
+                    expand=True,
+                    ink=True,
+                    border_radius=10,
+                    padding=ft.padding.symmetric(vertical=6),
+                    tooltip="Tocca per tornare a oggi",
+                    on_click=lambda _: (
+                        page.run_task(on_reset_period)
+                        if on_reset_period is not None
+                        else None
+                    ),
+                    content=label,
+                ),
+                ft.IconButton(
+                    icon=ft.Icons.CHEVRON_RIGHT,
+                    icon_color=_TEXT,
+                    tooltip="Periodo successivo",
+                    on_click=lambda _: (
+                        page.run_task(on_shift_period, 1)
+                        if on_shift_period is not None
+                        else None
+                    ),
+                ),
+            ],
+        ),
+    )
+
+
+def _period_range_label(state: AppState) -> str:
+    summary = state.timelog_period_summary or {}
+    start = str(summary.get("start_date", "") or "")
+    end = str(summary.get("end_date", "") or "")
+    period = state.dashboard_period
+    if period == "month":
+        if start:
+            return f"{_month_name(start).capitalize()} {start[:4]}"
+        return "Mese corrente"
+    if period == "day":
+        return _short_date(start) or "Oggi"
+    if start and end:
+        return f"{_short_date(start)} – {_short_date(end)}"
+    return "Settimana corrente"
+
+
+def _short_date(value: str) -> str:
+    parsed = _parse_anchor_date(value)
+    return parsed.strftime("%d/%m") if parsed else ""
+
+
 def _metric_card(*, col: int, icon: str, value: str, label: str) -> ft.Control:
     return ft.Container(
         col=col,
@@ -226,6 +309,12 @@ def _chart_card(daily_totals: list[dict], period: str) -> ft.Control:
                     color=_TEXT,
                 ),
                 content,
+                ft.Text(
+                    "Rosa: ore lavorate · Riposo · Ferie · Perm. · Malat.",
+                    size=10,
+                    color=_MUTED,
+                    visible=bool(daily_totals),
+                ),
             ],
         ),
     )
@@ -322,10 +411,40 @@ def _month_grid(daily_totals: list[dict]) -> ft.Control:
     )
 
 
+_DAY_STATUS_STYLES = {
+    "riposo": ("Riposo", "#90A4AE"),
+    "ferie": ("Ferie", "#FFB300"),
+    "permesso": ("Perm.", "#26A69A"),
+    "malattia": ("Malat.", "#AB47BC"),
+}
+
+
 def _month_day_cell(item: dict, max_val: float) -> ft.Control:
     val = _safe_float(item.get("total_value", 0))
     day_label = item.get("day", "")[-2:]
+    status = str(item.get("status", "") or "")
     fill_ratio = (val / max_val) if max_val else 0
+    status_style = _DAY_STATUS_STYLES.get(status) if val <= 0 else None
+
+    if val > 0:
+        bar_color = _ACCENT
+        bar_opacity = max(0.25, fill_ratio)
+        bottom_text = _fmt_h(val)
+        bottom_color = _TEXT
+        bottom_weight = ft.FontWeight.W_700
+    elif status_style is not None:
+        bar_color = status_style[1]
+        bar_opacity = 1
+        bottom_text = status_style[0]
+        bottom_color = status_style[1]
+        bottom_weight = ft.FontWeight.W_700
+    else:
+        bar_color = _DIVIDER
+        bar_opacity = 1
+        bottom_text = "0 h"
+        bottom_color = _MUTED
+        bottom_weight = ft.FontWeight.W_500
+
     return ft.Container(
         expand=1,
         height=52,
@@ -341,14 +460,14 @@ def _month_day_cell(item: dict, max_val: float) -> ft.Control:
                     width=22,
                     height=5,
                     border_radius=999,
-                    bgcolor=_ACCENT if val > 0 else _DIVIDER,
-                    opacity=max(0.25, fill_ratio) if val > 0 else 1,
+                    bgcolor=bar_color,
+                    opacity=bar_opacity,
                 ),
                 ft.Text(
-                    _fmt_h(val) if val > 0 else "0 h",
+                    bottom_text,
                     size=9,
-                    color=_TEXT if val > 0 else _MUTED,
-                    weight=ft.FontWeight.W_700 if val > 0 else ft.FontWeight.W_500,
+                    color=bottom_color,
+                    weight=bottom_weight,
                     max_lines=1,
                 ),
             ],

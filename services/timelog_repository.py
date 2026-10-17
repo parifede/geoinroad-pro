@@ -189,6 +189,16 @@ class TimelogRepository:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS day_states (
+                    account_id TEXT NOT NULL,
+                    day TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    PRIMARY KEY (account_id, day)
+                )
+                """
+            )
             self._cleanup_legacy_rows(conn)
             conn.commit()
 
@@ -288,6 +298,7 @@ class TimelogRepository:
             and self._row_work_date(row, captured_at) <= capture_day.isoformat()
         ]
         normalized_account_id = account_id or "default"
+        day_statuses = self._collect_day_statuses(payload, captured_at, capture_day)
         with self._connect(db_path) as conn:
             conn.execute(
                 """
@@ -298,6 +309,19 @@ class TimelogRepository:
                 """,
                 (normalized_account_id, capture_day.isoformat()),
             )
+            if day_statuses:
+                conn.executemany(
+                    """
+                    INSERT INTO day_states (account_id, day, status)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(account_id, day)
+                    DO UPDATE SET status = excluded.status
+                    """,
+                    [
+                        (normalized_account_id, day, status)
+                        for day, status in day_statuses.items()
+                    ],
+                )
             conn.commit()
         if not rows:
             self._write_account_log(db_path, normalized_account_id, payload)
@@ -495,16 +519,31 @@ class TimelogRepository:
             row[0]: {"total_value": float(row[1] or 0), "entries": int(row[2] or 0)}
             for row in rows
         }
+        with self._connect(db_path) as conn:
+            status_by_day = {
+                row[0]: str(row[1] or "")
+                for row in conn.execute(
+                    """
+                    SELECT day, status FROM day_states
+                    WHERE account_id = ? AND day >= ? AND day <= ?
+                    """,
+                    (account_id, start.isoformat(), end.isoformat()),
+                ).fetchall()
+            }
         result = []
         current = start
         while current <= end:
             day_key = current.isoformat()
             values = values_by_day.get(day_key, {"total_value": 0.0, "entries": 0})
+            status = status_by_day.get(day_key, "")
+            if values["total_value"] > 0:
+                status = "lavorato"
             result.append(
                 {
                     "day": day_key,
                     "total_value": values["total_value"],
                     "entries": values["entries"],
+                    "status": status,
                 }
             )
             current += timedelta(days=1)
@@ -543,6 +582,52 @@ class TimelogRepository:
             "total_value": total_value,
             "average_value": (total_value / worked_days) if worked_days else 0.0,
         }
+
+    _STATUS_RANKS = {
+        "lavorato": 4,
+        "malattia": 3,
+        "ferie": 3,
+        "permesso": 2,
+        "riposo": 1,
+    }
+
+    def _collect_day_statuses(
+        self,
+        payload: dict,
+        captured_at: str,
+        capture_day: date,
+    ) -> dict[str, str]:
+        statuses: dict[str, str] = {}
+        for row in payload.get("rows", []) or []:
+            work_date = self._row_work_date(row, captured_at)
+            if work_date > capture_day.isoformat():
+                continue
+            status = self._day_status_for_row(row)
+            if not status:
+                continue
+            current = statuses.get(work_date)
+            if current is None or (
+                self._STATUS_RANKS.get(status, 0) > self._STATUS_RANKS.get(current, 0)
+            ):
+                statuses[work_date] = status
+        return statuses
+
+    def _day_status_for_row(self, row: dict) -> str:
+        if self._coerce_value(row.get("value")) > 0:
+            return "lavorato"
+        marker = str(row.get("work_marker", "")).upper()
+        text = f"{row.get('status', '')} {row.get('label', '')}".lower()
+        if "ferie" in text or "vacanz" in text:
+            return "ferie"
+        if "permess" in text:
+            return "permesso"
+        if "malatt" in text:
+            return "malattia"
+        if marker == "W" or "presente" in text:
+            return "lavorato"
+        if marker == "R" or "libero" in text or "ripos" in text:
+            return "riposo"
+        return ""
 
     @staticmethod
     def _coerce_value(value) -> float:
@@ -596,6 +681,10 @@ class TimelogRepository:
         with self._connect(db_path) as conn:
             conn.execute(
                 "DELETE FROM timelogs WHERE account_id = ?",
+                (normalized_account_id,),
+            )
+            conn.execute(
+                "DELETE FROM day_states WHERE account_id = ?",
                 (normalized_account_id,),
             )
             conn.commit()

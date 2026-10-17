@@ -350,9 +350,8 @@
     if (isCalendar) {
       const calendarHeaderMatch = bodyText.match(/\b\d{1,2}\s+([A-Za-z]{3})\s*~/i);
       const calendarDefaultMonth = calendarHeaderMatch ? calendarHeaderMatch[1] : "";
-      const calendarPattern = /\b(LUN|MAR|MER|GIO|VEN|SAB|DOM)\s+(\d{1,2})(?:\s+([A-Za-z]{3}))?\s+([WR])\s+(Presente no route|Libero)\s+\(([^)]+)\)/gi;
+      const calendarPattern = /\b(LUN|MAR|MER|GIO|VEN|SAB|DOM)\s+(\d{1,2})(?:\s+([A-Za-z]{3}))?\s+([WR])\s+(Presente no route|Libero|Ferie|Permessi?|Malattia)\s+\(([^)]+)\)/gi;
       for (const match of bodyText.matchAll(calendarPattern)) {
-        if (match[4].toUpperCase() !== "W") continue;
         const monthLabel = match[3] || calendarDefaultMonth;
         const workDate = isoFromItalianDay(match[2], monthLabel);
         const label = match[1].toUpperCase() + " " + match[2] + " " + match[5] + " (" + match[6] + ")";
@@ -367,7 +366,7 @@
             station: match[6],
             status: match[5],
             day_code: match[1].toUpperCase(),
-            work_marker: match[4],
+            work_marker: match[4].toUpperCase(),
             source: "dom/calendar",
             source_url: sourceUrl,
           });
@@ -636,6 +635,19 @@
             date: day,
             status: "Presente no route",
             work_marker: "W",
+            source: "geoinroad_api/employees/driver_calendar",
+          });
+        } else {
+          const absence = String(
+            item.absence_type || item.absence || item.reason || ""
+          ).trim();
+          rows.push({
+            label: absence || "Libero",
+            value: "0",
+            raw: "driver_calendar " + day,
+            date: day,
+            status: absence || "Libero",
+            work_marker: "R",
             source: "geoinroad_api/employees/driver_calendar",
           });
         }
