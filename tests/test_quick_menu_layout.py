@@ -9,6 +9,10 @@ class QuickMenuLayoutTest(unittest.TestCase):
         self.assertIn("bottom=144", source)
         self.assertNotIn("bottom=24", source)
 
+    def test_menu_offers_credentials_shortcut_for_password_changes(self):
+        source = Path("views/web_view.py").read_text(encoding="utf-8")
+        self.assertIn('"Credenziali", on_open_vault', source)
+
 
 if __name__ == "__main__":
     unittest.main()

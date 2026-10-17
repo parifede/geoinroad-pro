@@ -18,6 +18,15 @@
     }
   }
 
+  function localIsoDate(value) {
+    const d = value instanceof Date ? value : new Date();
+    return [
+      d.getFullYear(),
+      String(d.getMonth() + 1).padStart(2, "0"),
+      String(d.getDate()).padStart(2, "0"),
+    ].join("-");
+  }
+
   function visible(element) {
     if (!element) return false;
     const style = window.getComputedStyle(element);
@@ -234,7 +243,7 @@
     const isCalendarUrl = /\/calendar/i.test(String(sourceUrl || ""));
 
     function fallbackDate() {
-      return sourceDateMatch?.[1] || dates[0]?.iso || new Date().toISOString().slice(0, 10);
+      return sourceDateMatch?.[1] || dates[0]?.iso || localIsoDate();
     }
 
     function toMinutes(t) {
@@ -251,9 +260,15 @@
       return result;
     }
 
-    function currentYear() {
-      const yearMatch = bodyText.match(/\b(20\d{2})\b/);
-      return yearMatch ? parseInt(yearMatch[1], 10) : new Date().getFullYear();
+    function yearForMonth(month) {
+      // A cavallo d'anno il calendario mostra mesi dell'anno vicino:
+      // scegli l'anno che rende il mese piu' vicino al mese corrente.
+      const now = new Date();
+      let year = now.getFullYear();
+      const diff = month - (now.getMonth() + 1);
+      if (diff > 6) year -= 1;
+      if (diff < -6) year += 1;
+      return year;
     }
 
     function monthNumber(label) {
@@ -269,7 +284,7 @@
       const month = monthNumber(monthLabel);
       if (!month) return fallbackDate();
       return [
-        String(currentYear()),
+        String(yearForMonth(month)),
         String(month).padStart(2, "0"),
         String(day).padStart(2, "0"),
       ].join("-");
@@ -446,7 +461,7 @@
       captured_at: new Date().toISOString(),
       debug: {
         text_length: bodyText.length,
-        text_sample: bodyText.slice(0, 2500),
+        text_sample: bodyText.slice(0, 600),
         visible_text_count: textNodes.length,
         time_range_count: Array.from(bodyText.matchAll(timeRangePattern)).length,
         start_count: startMatches.length,
@@ -469,7 +484,7 @@
     const date = new Date();
     date.setHours(12, 0, 0, 0);
     date.setDate(date.getDate() + offsetDays);
-    return date.toISOString().slice(0, 10);
+    return localIsoDate(date);
   }
 
   function currentMonthDateRange() {
@@ -480,8 +495,8 @@
     end.setMonth(end.getMonth() + 1);
     end.setDate(0);
     return {
-      from: start.toISOString().slice(0, 10),
-      to: end.toISOString().slice(0, 10),
+      from: localIsoDate(start),
+      to: localIsoDate(end),
     };
   }
 
@@ -825,7 +840,8 @@
       debug: {
         ...primary.debug,
         api_debugs: payloads.map((payload) => payload.debug || {}).filter((debug) => debug.api_available),
-        expanded_fetches: fetches,
+        expanded_fetches: fetches.slice(0, 40),
+        expanded_fetch_count: fetches.length,
         expanded_payload_count: payloads.length,
         expanded_row_count: mergedRows.length,
       },
@@ -873,7 +889,7 @@
     const startDate = new Date(from + "T12:00:00");
     const endDate = new Date(to + "T12:00:00");
     for (let date = startDate; date <= endDate; date.setDate(date.getDate() + 1)) {
-      addDateUrls(queue, queued, date.toISOString().slice(0, 10));
+      addDateUrls(queue, queued, localIsoDate(date));
     }
     for (const row of payloads[0].rows || []) {
       if (row.work_marker === "W" || parseFloat(row.value || "0") > 0) {

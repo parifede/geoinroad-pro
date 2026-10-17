@@ -1,4 +1,6 @@
 import json
+import os
+import time
 import unittest
 from pathlib import Path
 
@@ -272,6 +274,131 @@ class TimelogRepositoryTest(unittest.TestCase):
             [item["total_value"] for item in week],
             [1.0, 0.0, 0.0, 8.5, 0.0, 0.0, 7.0],
         )
+
+    def test_one_time_cleanup_removes_legacy_keyword_and_implausible_rows(self):
+        repo = TimelogRepository()
+        test_dir = Path.cwd() / "tmp-test"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        repo.db_path = test_dir / "geoinroad_pro_cleanup_test.sqlite3"
+        if repo.db_path.exists():
+            repo.db_path.unlink()
+        repo._ensure_schema()
+
+        with repo._connect(repo.db_path) as conn:
+            conn.executemany(
+                """
+                INSERT INTO timelogs (
+                    account_id, entry_key, captured_at, work_date,
+                    source_url, label, value, raw, payload
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')
+                """,
+                [
+                    ("acct", "2026-05-06|turno 06:00-14:00", "2026-05-06T10:00:00+00:00",
+                     "2026-05-06", "u", "Turno 06:00-14:00", 8.0, ""),
+                    ("acct", "2026-05-06|totale", "2026-05-06T10:00:00+00:00",
+                     "2026-05-06", "u", "Totale", 173.0, ""),
+                    ("acct", "2026-05-07|ore", "2026-05-07T10:00:00+00:00",
+                     "2026-05-07", "u", "ore", 8.5, ""),
+                    ("acct", "2026-05-08|dato strano", "2026-05-08T10:00:00+00:00",
+                     "2026-05-08", "u", "dato strano", 99.0, ""),
+                ],
+            )
+            # Simula un database pre-migrazione.
+            conn.execute("DELETE FROM app_meta WHERE key = 'cleanup_legacy_rows'")
+            conn.commit()
+
+        repo._ensure_schema()
+
+        with repo._connect(repo.db_path) as conn:
+            labels = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT label FROM timelogs WHERE account_id = 'acct'"
+                ).fetchall()
+            }
+            flag = conn.execute(
+                "SELECT value FROM app_meta WHERE key = 'cleanup_legacy_rows'"
+            ).fetchone()
+
+        self.assertEqual(labels, {"Turno 06:00-14:00"})
+        self.assertEqual(flag[0], "done")
+
+        # La pulizia e' una tantum: nuove righe keyword plausibili sopravvivono.
+        with repo._connect(repo.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO timelogs (
+                    account_id, entry_key, captured_at, work_date,
+                    source_url, label, value, raw, payload
+                )
+                VALUES ('acct', '2026-05-09|ore', '2026-05-09T10:00:00+00:00',
+                        '2026-05-09', 'u', 'ore', 8.0, '', '{}')
+                """
+            )
+            conn.commit()
+        repo._ensure_schema()
+        with repo._connect(repo.db_path) as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM timelogs WHERE account_id = 'acct'"
+            ).fetchone()[0]
+        self.assertEqual(count, 2)
+
+    @unittest.skipUnless(hasattr(time, "tzset"), "richiede time.tzset (Unix)")
+    def test_capture_day_uses_device_timezone_not_utc(self):
+        original_tz = os.environ.get("TZ")
+        os.environ["TZ"] = "Europe/Rome"
+        time.tzset()
+        try:
+            # 22:30 UTC = 00:30 del giorno dopo a Roma (ora legale):
+            # il giorno di cattura deve essere quello locale.
+            parsed = TimelogRepository._parse_date("2026-05-06T22:30:00+00:00")
+            self.assertEqual(parsed.isoformat(), "2026-05-07")
+            # Una data secca resta invariata.
+            parsed_plain = TimelogRepository._parse_date("2026-05-06")
+            self.assertEqual(parsed_plain.isoformat(), "2026-05-06")
+        finally:
+            if original_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = original_tz
+            time.tzset()
+
+    def test_saved_rows_store_slim_per_row_payload(self):
+        repo = TimelogRepository()
+        test_dir = Path.cwd() / "tmp-test"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        repo.db_path = test_dir / "geoinroad_pro_slim_payload_test.sqlite3"
+        if repo.db_path.exists():
+            repo.db_path.unlink()
+        repo._ensure_schema()
+
+        repo._save_snapshot_sync(
+            repo.db_path,
+            {
+                "captured_at": "2026-05-06T10:00:00+00:00",
+                "url": "https://example.test",
+                "debug": {"text_sample": "x" * 600},
+                "rows": [
+                    {"label": "Turno 06:00-10:00", "value": 4, "date": "2026-05-06"},
+                    {"label": "Turno 14:00-18:00", "value": 4, "date": "2026-05-06"},
+                ],
+            },
+            account_id="acct_slim",
+        )
+
+        with repo._connect(repo.db_path) as conn:
+            stored = conn.execute(
+                "SELECT payload FROM timelogs WHERE account_id = ?",
+                ("acct_slim",),
+            ).fetchall()
+
+        self.assertEqual(len(stored), 2)
+        for (raw_payload,) in stored:
+            data = json.loads(raw_payload)
+            self.assertNotIn("rows", data)
+            self.assertNotIn("debug", data)
+            self.assertIn(data["label"], {"Turno 06:00-10:00", "Turno 14:00-18:00"})
 
     def test_future_planned_rows_after_capture_day_are_ignored(self):
         repo = TimelogRepository()

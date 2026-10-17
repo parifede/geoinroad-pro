@@ -181,7 +181,41 @@ class TimelogRepository:
                 ON timelogs(account_id, entry_key)
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
+            self._cleanup_legacy_rows(conn)
             conn.commit()
+
+    @staticmethod
+    def _cleanup_legacy_rows(conn: sqlite3.Connection) -> None:
+        # Una tantum: le versioni precedenti dello scraper salvavano totali e
+        # contatori ("Totale 173", "ore", "straordinari") come ore giornaliere
+        # e potevano produrre valori oltre le 24 ore. Quelle righe inquinano i
+        # grafici finche' non vengono riscritte, quindi vanno rimosse una volta.
+        applied = conn.execute(
+            "SELECT value FROM app_meta WHERE key = 'cleanup_legacy_rows'"
+        ).fetchone()
+        if applied:
+            return
+        conn.execute(
+            """
+            DELETE FROM timelogs
+            WHERE value > 24
+               OR lower(trim(label)) IN (
+                    'ore', 'hour', 'hours', 'totale', 'timelog',
+                    'straordinari', 'ordinario'
+               )
+            """
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO app_meta (key, value) VALUES ('cleanup_legacy_rows', 'done')"
+        )
 
     def _ensure_column(
         self,
@@ -270,7 +304,6 @@ class TimelogRepository:
             return
 
         source_url = payload.get("url", "")
-        serialized_payload = json.dumps(payload, ensure_ascii=False)
         positive_dates = sorted(
             {self._row_work_date(row, captured_at) for row in rows}
         )
@@ -308,7 +341,6 @@ class TimelogRepository:
                         account_id=normalized_account_id,
                         captured_at=captured_at,
                         source_url=source_url,
-                        serialized_payload=serialized_payload,
                     )
                     for row in rows
                 ],
@@ -526,7 +558,6 @@ class TimelogRepository:
         account_id: str,
         captured_at: str,
         source_url: str,
-        serialized_payload: str,
     ) -> tuple:
         work_date = self._row_work_date(row, captured_at)
         label = str(row.get("label", "dato"))
@@ -539,7 +570,7 @@ class TimelogRepository:
             label,
             self._coerce_value(row.get("value")),
             str(row.get("raw", ""))[:500],
-            serialized_payload,
+            json.dumps(row, ensure_ascii=False, default=str),
         )
 
     @staticmethod
@@ -606,6 +637,9 @@ class TimelogRepository:
             parsed = TimelogRepository._parse_date(str(raw_date))
             if parsed is not None:
                 return parsed.isoformat()
+        parsed_capture = TimelogRepository._parse_date(captured_at)
+        if parsed_capture is not None:
+            return parsed_capture.isoformat()
         return captured_at[:10]
 
     @staticmethod
@@ -630,12 +664,25 @@ class TimelogRepository:
     def _parse_date(value: str) -> date | None:
         if not value:
             return None
+        text = str(value)
+        if "T" in text:
+            # Timestamp completo (es. captured_at UTC): il giorno va
+            # calcolato nel fuso del dispositivo, non in UTC, altrimenti
+            # uno scraping poco dopo mezzanotte scarta i turni di oggi.
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                parsed = None
+            if parsed is not None:
+                if parsed.tzinfo is not None:
+                    parsed = parsed.astimezone()
+                return parsed.date()
         for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
             try:
-                return datetime.strptime(value[:10], fmt).date()
+                return datetime.strptime(text[:10], fmt).date()
             except ValueError:
                 continue
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
         except ValueError:
             return None

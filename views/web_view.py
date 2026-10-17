@@ -72,6 +72,7 @@ def build_web_view(
                     on_refresh_webview=on_refresh_webview,
                     on_request_work_stats=on_request_work_stats,
                     on_report_bug=on_report_bug,
+                    on_open_vault=on_open_vault,
                     on_logout=on_logout,
                 ),
             ],
@@ -135,6 +136,7 @@ def _build_quick_menu(
     on_refresh_webview: Callable[[], Awaitable[None]],
     on_request_work_stats: Callable[[], Awaitable[None]],
     on_report_bug: Callable[[], Awaitable[None]],
+    on_open_vault: Callable[[], Awaitable[None]],
     on_logout: Callable[[], Awaitable[None]],
 ) -> ft.Control:
     scrim = ft.Container(
@@ -213,6 +215,7 @@ def _build_quick_menu(
                 224,
             ),
             action_button(ft.Icons.ERROR_OUTLINE, "Segnala bug", on_report_bug, 224),
+            action_button(ft.Icons.KEY, "Credenziali", on_open_vault, 224),
             action_button(ft.Icons.LOGOUT, "Log out", on_logout, 224),
         ]
     )

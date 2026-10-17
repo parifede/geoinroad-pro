@@ -9,6 +9,14 @@ _STORAGE_TIMEOUT_SECONDS = 2
 
 
 class CredentialStore:
+    """Credenziali con password solo nel vault cifrato.
+
+    La password vive esclusivamente nel SecureStorage (Keystore/Keychain).
+    Nelle SharedPreferences restano solo username e flag di presenza.
+    Le installazioni precedenti salvavano la password in chiaro nelle
+    preferences: load_credentials la migra nel vault e la rimuove.
+    """
+
     def __init__(self) -> None:
         self.login_url = LOGIN_URL
 
@@ -33,9 +41,6 @@ class CredentialStore:
         password: str,
     ) -> None:
         self._ensure_supported(page)
-        await preferences.set(USERNAME_KEY, username)
-        await preferences.set(PASSWORD_KEY, password)
-        await preferences.set(CREDENTIALS_READY_KEY, True)
         try:
             await asyncio.wait_for(
                 asyncio.gather(
@@ -44,8 +49,13 @@ class CredentialStore:
                 ),
                 timeout=_STORAGE_TIMEOUT_SECONDS,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(
+                "Salvataggio nel vault protetto non riuscito. Riprova."
+            ) from exc
+        await preferences.set(USERNAME_KEY, username)
+        await preferences.remove(PASSWORD_KEY)
+        await preferences.set(CREDENTIALS_READY_KEY, True)
 
     async def load_credentials(
         self,
@@ -56,23 +66,40 @@ class CredentialStore:
     ) -> tuple[str, str]:
         self._ensure_supported(page)
         username = await preferences.get(USERNAME_KEY)
-        password = await preferences.get(PASSWORD_KEY)
-        if username and password:
-            return username, password
+        password = None
         try:
-            username, password = await asyncio.wait_for(
+            stored_username, password = await asyncio.wait_for(
                 asyncio.gather(
                     storage.get(USERNAME_KEY),
                     storage.get(PASSWORD_KEY),
                 ),
                 timeout=_STORAGE_TIMEOUT_SECONDS,
             )
+            username = username or stored_username
         except Exception:
-            username = None
             password = None
-        if not username or not password:
-            username = await preferences.get(USERNAME_KEY)
-            password = await preferences.get(PASSWORD_KEY)
+
+        legacy_password = await preferences.get(PASSWORD_KEY)
+        if not password and legacy_password:
+            password = legacy_password
+            migrated = True
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        storage.set(USERNAME_KEY, username or ""),
+                        storage.set(PASSWORD_KEY, password),
+                    ),
+                    timeout=_STORAGE_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                # Il vault non e' disponibile: la copia legacy resta l'unica
+                # fonte, rimuoverla ora bloccherebbe l'accesso al riavvio.
+                migrated = False
+            if migrated:
+                await preferences.remove(PASSWORD_KEY)
+        elif password and legacy_password:
+            await preferences.remove(PASSWORD_KEY)
+
         if not username or not password:
             raise RuntimeError(
                 "Le credenziali protette non sono disponibili. Salvale di nuovo."

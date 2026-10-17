@@ -51,6 +51,19 @@ class AutoLoginScriptTest(unittest.TestCase):
         # Le pause non vengono conteggiate come turni.
         self.assertIn("pausa|pause|break|riposo", script)
 
+    def test_stats_scraper_uses_local_dates_not_utc(self):
+        script = build_auto_login_script(username="user@example.test", password="secret")
+
+        self.assertIn("function localIsoDate(", script)
+        self.assertNotIn("toISOString().slice(0, 10)", script)
+
+    def test_stats_payload_stays_small_enough_for_console_bridge(self):
+        script = build_auto_login_script(username="user@example.test", password="secret")
+
+        self.assertIn("text_sample: bodyText.slice(0, 600)", script)
+        self.assertIn("expanded_fetches: fetches.slice(0, 40)", script)
+        self.assertIn("expanded_fetch_count", script)
+
     def test_stats_scraper_normalizes_dash_variants_and_start_end_labels(self):
         script = build_auto_login_script(username="user@example.test", password="secret")
 
@@ -72,6 +85,15 @@ class AutoLoginScriptTest(unittest.TestCase):
         self.assertIn("calendarDefaultMonth", script)
         self.assertIn("(?:\\s+([A-Za-z]{3}))?", script)
         self.assertIn('match[4].toUpperCase() !== "W"', script)
+
+    def test_calendar_year_follows_nearest_month_across_new_year(self):
+        script = build_auto_login_script(username="user@example.test", password="secret")
+
+        self.assertIn("function yearForMonth(", script)
+        self.assertIn("if (diff > 6) year -= 1;", script)
+        self.assertIn("if (diff < -6) year += 1;", script)
+        # L'anno non viene piu' pescato dal primo "20xx" trovato nella pagina.
+        self.assertNotIn("bodyText.match(/\\b(20\\d{2})\\b/)", script)
 
     def test_stats_scraper_fetches_calendar_and_work_days(self):
         script = build_auto_login_script(username="user@example.test", password="secret")

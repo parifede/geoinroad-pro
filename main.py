@@ -588,6 +588,10 @@ def main(page: ft.Page):
         await go_to(ROUTE_LOCK)
 
     async def open_vault() -> None:
+        set_lock_status(
+            "Aggiorna le credenziali Dimetior e salvale di nuovo nel vault.",
+            ft.Colors.BLUE_GREY_700,
+        )
         await go_to(ROUTE_LOCK)
 
     async def inject_ptr() -> None:
