@@ -30,6 +30,7 @@ def build_dashboard_view(
     on_period_change: Callable[[str], Awaitable[None]],
     on_shift_period: Callable[[int], Awaitable[None]] | None = None,
     on_reset_period: Callable[[], Awaitable[None]] | None = None,
+    on_refresh_stats: Callable[[], Awaitable[None]] | None = None,
 ) -> ft.View:
     return ft.View(
         route=ROUTE_DASHBOARD,
@@ -43,7 +44,7 @@ def build_dashboard_view(
                     expand=True,
                     spacing=0,
                     controls=[
-                        _header(page, on_back_to_diary),
+                        _header(page, on_back_to_diary, on_refresh_stats),
                         ft.Container(
                             expand=True,
                             content=ft.Column(
@@ -70,7 +71,11 @@ def build_dashboard_view(
     )
 
 
-def _header(page: ft.Page, on_back_to_diary: Callable[[], Awaitable[None]]) -> ft.Control:
+def _header(
+    page: ft.Page,
+    on_back_to_diary: Callable[[], Awaitable[None]],
+    on_refresh_stats: Callable[[], Awaitable[None]] | None = None,
+) -> ft.Control:
     return ft.Container(
         bgcolor=_BG,
         padding=ft.padding.symmetric(horizontal=8, vertical=6),
@@ -91,10 +96,27 @@ def _header(page: ft.Page, on_back_to_diary: Callable[[], Awaitable[None]]) -> f
                     weight=ft.FontWeight.W_700,
                     color=ft.Colors.WHITE,
                 ),
-                ft.Container(
-                    width=72,
-                    height=36,
-                    content=ft.Image(src="download.png", fit="contain"),
+                ft.Row(
+                    spacing=0,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.IconButton(
+                            icon=ft.Icons.SYNC,
+                            icon_color=ft.Colors.WHITE,
+                            icon_size=20,
+                            tooltip="Ricarica i dati dal portale",
+                            on_click=lambda _: (
+                                page.run_task(on_refresh_stats)
+                                if on_refresh_stats is not None
+                                else None
+                            ),
+                        ),
+                        ft.Container(
+                            width=56,
+                            height=36,
+                            content=ft.Image(src="download.png", fit="contain"),
+                        ),
+                    ],
                 ),
             ],
         ),

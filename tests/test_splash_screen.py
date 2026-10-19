@@ -45,13 +45,16 @@ class SplashScreenTest(unittest.TestCase):
         self.assertEqual(logo_frame.content.src, "splash_mark_dark.png")
         self.assertEqual(page.tasks[0][0].__name__, "_pulse_logo")
 
-    def test_splash_mark_follows_platform_brightness(self):
+    def test_splash_is_always_dark_like_native_boot_splash(self):
+        # Un'unica schermata d'ingresso coerente: scura col marchio bianco,
+        # come la splash nativa, qualunque sia il tema del telefono.
         light_page = DummyPage(platform_brightness=ft.Brightness.LIGHT)
 
         view = build_splash_view(light_page)
         logo_frame = view.controls[0].content.content.controls[0]
 
-        self.assertEqual(logo_frame.content.src, "splash_mark_light.png")
+        self.assertEqual(view.bgcolor, "#1A1A1A")
+        self.assertEqual(logo_frame.content.src, "splash_mark_dark.png")
 
     def test_native_splash_and_launcher_sources_are_square(self):
         root = Path(__file__).resolve().parent.parent

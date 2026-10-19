@@ -5,16 +5,21 @@ import flet_secure_storage as fss
 
 from app_config import CREDENTIALS_READY_KEY, LOGIN_URL, PASSWORD_KEY, USERNAME_KEY
 
-_STORAGE_TIMEOUT_SECONDS = 2
+# Il Keystore Android puo' essere lento alla prima apertura o mostrare un
+# prompt biometrico: un timeout stretto faceva fallire il salvataggio e
+# l'utente perdeva le credenziali a ogni riavvio.
+_STORAGE_TIMEOUT_SECONDS = 8
+_STORAGE_ATTEMPTS = 2
 
 
 class CredentialStore:
-    """Credenziali con password solo nel vault cifrato.
+    """Credenziali con password nel vault cifrato quando disponibile.
 
-    La password vive esclusivamente nel SecureStorage (Keystore/Keychain).
-    Nelle SharedPreferences restano solo username e flag di presenza.
-    Le installazioni precedenti salvavano la password in chiaro nelle
-    preferences: load_credentials la migra nel vault e la rimuove.
+    La password vive nel SecureStorage (Keystore/Keychain). Nelle
+    SharedPreferences restano username e flag di presenza. Se il vault
+    non risponde dopo i tentativi, la password resta nelle preferences
+    come fallback: perdere l'accesso a ogni riavvio e' peggio. Appena il
+    vault torna disponibile, load_credentials migra e ripulisce.
     """
 
     def __init__(self) -> None:
@@ -31,6 +36,26 @@ class CredentialStore:
         saved = await preferences.get(CREDENTIALS_READY_KEY)
         return bool(saved)
 
+    @staticmethod
+    async def _store_in_vault(
+        storage: fss.SecureStorage,
+        username: str,
+        password: str,
+    ) -> bool:
+        for _ in range(_STORAGE_ATTEMPTS):
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        storage.set(USERNAME_KEY, username),
+                        storage.set(PASSWORD_KEY, password),
+                    ),
+                    timeout=_STORAGE_TIMEOUT_SECONDS,
+                )
+                return True
+            except Exception:
+                continue
+        return False
+
     async def save_credentials(
         self,
         *,
@@ -41,20 +66,12 @@ class CredentialStore:
         password: str,
     ) -> None:
         self._ensure_supported(page)
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(
-                    storage.set(USERNAME_KEY, username),
-                    storage.set(PASSWORD_KEY, password),
-                ),
-                timeout=_STORAGE_TIMEOUT_SECONDS,
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                "Salvataggio nel vault protetto non riuscito. Riprova."
-            ) from exc
+        secure_ok = await self._store_in_vault(storage, username, password)
         await preferences.set(USERNAME_KEY, username)
-        await preferences.remove(PASSWORD_KEY)
+        if secure_ok:
+            await preferences.remove(PASSWORD_KEY)
+        else:
+            await preferences.set(PASSWORD_KEY, password)
         await preferences.set(CREDENTIALS_READY_KEY, True)
 
     async def load_credentials(
@@ -82,20 +99,9 @@ class CredentialStore:
         legacy_password = await preferences.get(PASSWORD_KEY)
         if not password and legacy_password:
             password = legacy_password
-            migrated = True
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(
-                        storage.set(USERNAME_KEY, username or ""),
-                        storage.set(PASSWORD_KEY, password),
-                    ),
-                    timeout=_STORAGE_TIMEOUT_SECONDS,
-                )
-            except Exception:
-                # Il vault non e' disponibile: la copia legacy resta l'unica
-                # fonte, rimuoverla ora bloccherebbe l'accesso al riavvio.
-                migrated = False
-            if migrated:
+            # Il fallback resta nelle preferences finche' il vault non
+            # risponde: rimuoverlo prima bloccherebbe l'accesso al riavvio.
+            if await self._store_in_vault(storage, username or "", password):
                 await preferences.remove(PASSWORD_KEY)
         elif password and legacy_password:
             await preferences.remove(PASSWORD_KEY)

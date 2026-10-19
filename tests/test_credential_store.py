@@ -75,21 +75,29 @@ class CredentialStoreTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((username, password), ("driver", "secret"))
 
-    async def test_save_refuses_plaintext_fallback_when_secure_storage_fails(self):
+    async def test_save_falls_back_to_preferences_when_vault_fails(self):
+        # Perdere le credenziali a ogni riavvio e' peggio del fallback:
+        # se il vault non risponde, l'accesso deve comunque sopravvivere.
         store = CredentialStore()
         preferences = _Preferences()
 
-        with self.assertRaises(RuntimeError):
-            await store.save_credentials(
-                page=_Page(),
-                storage=_FailingStorage(),
-                preferences=preferences,
-                username="driver",
-                password="secret",
-            )
+        await store.save_credentials(
+            page=_Page(),
+            storage=_FailingStorage(),
+            preferences=preferences,
+            username="driver",
+            password="secret",
+        )
 
-        self.assertNotIn(PASSWORD_KEY, preferences.values)
-        self.assertNotIn(CREDENTIALS_READY_KEY, preferences.values)
+        self.assertEqual(preferences.values[PASSWORD_KEY], "secret")
+        self.assertTrue(preferences.values[CREDENTIALS_READY_KEY])
+
+        username, password = await store.load_credentials(
+            page=_Page(),
+            storage=_FailingStorage(),
+            preferences=preferences,
+        )
+        self.assertEqual((username, password), ("driver", "secret"))
 
     async def test_load_migrates_legacy_plaintext_password_into_vault(self):
         store = CredentialStore()
@@ -177,8 +185,11 @@ class CredentialStoreTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(USERNAME_KEY, preferences.values)
         self.assertNotIn(PASSWORD_KEY, preferences.values)
 
-    def test_secure_storage_timeout_stays_short_for_responsive_ui(self):
-        self.assertLessEqual(_STORAGE_TIMEOUT_SECONDS, 2)
+    def test_secure_storage_timeout_tolerates_slow_keystore(self):
+        # Il Keystore puo' essere lento alla prima apertura: un timeout
+        # troppo stretto faceva perdere le credenziali al riavvio.
+        self.assertGreaterEqual(_STORAGE_TIMEOUT_SECONDS, 5)
+        self.assertLessEqual(_STORAGE_TIMEOUT_SECONDS, 15)
 
 
 if __name__ == "__main__":

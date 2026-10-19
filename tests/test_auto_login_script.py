@@ -105,9 +105,11 @@ class AutoLoginScriptTest(unittest.TestCase):
         self.assertIn("function isWorkedMarker(", script)
         self.assertIn("if (marker) return isWorkedMarker(marker);", script)
         # Anche l'API calendario segnala i giorni non lavorati, con campioni
-        # diagnostici per mappare i tipi di assenza reali.
+        # diagnostici per mappare i tipi di assenza reali — ma mai per oggi
+        # o il futuro, dove lo stato non e' ancora definitivo.
         self.assertIn('work_marker: "R"', script)
         self.assertIn("calendar_samples", script)
+        self.assertIn("if (String(day) >= localIsoDate()) continue;", script)
 
     def test_calendar_year_follows_nearest_month_across_new_year(self):
         script = build_auto_login_script(username="user@example.test", password="secret")

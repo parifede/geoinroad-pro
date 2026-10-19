@@ -244,6 +244,7 @@ def main(page: ft.Page):
                 on_period_change=set_dashboard_period,
                 on_shift_period=shift_dashboard_period,
                 on_reset_period=reset_dashboard_period,
+                on_refresh_stats=request_work_stats,
             ),
         )
 
@@ -826,6 +827,7 @@ def main(page: ft.Page):
                     on_period_change=set_dashboard_period,
                     on_shift_period=shift_dashboard_period,
                     on_reset_period=reset_dashboard_period,
+                    on_refresh_stats=request_work_stats,
                 )
             )
             page.drawer = None

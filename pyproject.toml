@@ -19,8 +19,8 @@ min_sdk_version = 28
 adaptive_icon_background = "#ffffff"
 
 [tool.flet.splash]
-color = "#ffffff"
-dark_color = "#ffffff"
+color = "#1A1A1A"
+dark_color = "#1A1A1A"
 
 [tool.flet.android.permission]
 "android.permission.INTERNET" = true

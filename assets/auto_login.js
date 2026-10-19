@@ -651,6 +651,10 @@
             source: "geoinroad_api/employees/driver_calendar-default",
           });
         } else {
+          // Oggi e il futuro non vengono marcati dall'assenza API: il
+          // calendario puo' non essere ancora aggiornato per la giornata
+          // in corso e segnerebbe "riposo" un giorno lavorato.
+          if (String(day) >= localIsoDate()) continue;
           const absence = String(
             item.absence_type || item.absence || item.reason || ""
           ).trim();

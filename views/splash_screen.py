@@ -20,9 +20,10 @@ async def _pulse_logo(page: ft.Page, logo_frame: ft.Container) -> None:
 
 
 def build_splash_view(page: ft.Page) -> ft.View:
-    is_light = getattr(page, "platform_brightness", None) == ft.Brightness.LIGHT
-    bg = "#FFFFFF" if is_light else BRAND_DARK
-    muted = "#6E6E73" if is_light else "#A1A1A6"
+    # Sempre scura, come la splash nativa di avvio: un'unica schermata
+    # d'ingresso coerente, indipendente dal tema del telefono.
+    bg = BRAND_DARK
+    muted = "#A1A1A6"
     logo_frame = ft.Container(
         width=180,
         height=180,
@@ -30,7 +31,7 @@ def build_splash_view(page: ft.Page) -> ft.View:
         animate_scale=ft.Animation(720, ft.AnimationCurve.EASE_IN_OUT),
         animate_opacity=ft.Animation(720, ft.AnimationCurve.EASE_IN_OUT),
         content=ft.Image(
-            src="splash_mark_light.png" if is_light else "splash_mark_dark.png",
+            src="splash_mark_dark.png",
             fit=ft.BoxFit.CONTAIN,
             error_content=ft.Image(
                 src="icon.png",
