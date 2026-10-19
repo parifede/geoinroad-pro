@@ -78,6 +78,7 @@ class AppState:
     web_progress: int = 0
     webview_ready: bool = False
     autologin_injected: bool = False
+    login_failure_notified: bool = False
     background_stats_started: bool = False
     last_loaded_url: str = LOGIN_URL
     last_console_message: str = ""

@@ -20,6 +20,25 @@ class CredentialsFlowTest(unittest.TestCase):
         self.assertIn("page.run_task(ensure_timelog_repository)", body)
         self.assertIn("page.run_task(refresh_timelog_data)", body)
 
+    def test_failed_autologin_shows_explicit_feedback_dialog(self):
+        source = Path("main.py").read_text(encoding="utf-8")
+
+        # Quando l'auto-login esaurisce i tentativi, l'utente riceve un
+        # dialog con la via d'uscita (correggere le credenziali), non
+        # un messaggio di stato invisibile.
+        self.assertIn('if action == "autologin_max_attempts":', source)
+        self.assertIn("page.run_task(show_login_failed_dialog)", source)
+        match = re.search(
+            r"async def show_login_failed_dialog\(\) -> None:\n(?P<body>.*?)(?=\n    async def )",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+        self.assertIn("state.login_failure_notified", body)
+        self.assertIn("Accesso non riuscito", body)
+        self.assertIn("Correggi credenziali", body)
+
     def test_save_credentials_enters_webview_before_background_vault_write(self):
         source = Path("main.py").read_text(encoding="utf-8")
         match = re.search(

@@ -529,6 +529,7 @@ def main(page: ft.Page):
         state.cached_password = password
         state.account_id = state.timelog_repository.account_id_for_username(username)
         state.session_unlocked = True
+        state.login_failure_notified = False
         if state.password_field_ref.current is not None:
             state.password_field_ref.current.value = ""
         set_lock_status(
@@ -609,6 +610,7 @@ def main(page: ft.Page):
         state.cached_username = username
         state.cached_password = password
         state.account_id = state.timelog_repository.account_id_for_username(username)
+        state.login_failure_notified = False
         set_lock_status(
             "App sbloccata. Accesso al diario abilitato.",
             ft.Colors.GREEN_700,
@@ -638,11 +640,40 @@ def main(page: ft.Page):
         await go_to(ROUTE_LOCK)
 
     async def open_vault() -> None:
+        state.login_failure_notified = False
         set_lock_status(
             "Aggiorna le credenziali Dimetior e salvale di nuovo nel vault.",
             ft.Colors.BLUE_GREY_700,
         )
         await go_to(ROUTE_LOCK)
+
+    async def show_login_failed_dialog() -> None:
+        if state.login_failure_notified:
+            return
+        state.login_failure_notified = True
+
+        async def fix_credentials() -> None:
+            page.pop_dialog()
+            await open_vault()
+
+        page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                title=ft.Text("Accesso non riuscito"),
+                content=ft.Text(
+                    "Il portale ha rifiutato l'accesso automatico dopo 3 "
+                    "tentativi. Username o password potrebbero essere "
+                    "errati o scaduti: controllali e salvali di nuovo."
+                ),
+                actions=[
+                    ft.TextButton(
+                        "Correggi credenziali",
+                        on_click=lambda _: page.run_task(fix_credentials),
+                    ),
+                    ft.TextButton("Chiudi", on_click=lambda _: page.pop_dialog()),
+                ],
+            )
+        )
 
     async def inject_ptr() -> None:
         if page.web or not state.supports_embedded_webview(page):
@@ -728,6 +759,8 @@ def main(page: ft.Page):
             action = payload.get("action", "n/a")
             stage = payload.get("stage", "js")
             set_web_status(f"JS {stage}: {action}")
+            if action == "autologin_max_attempts":
+                page.run_task(show_login_failed_dialog)
             return
 
         if state.last_console_message.startswith(STATS_PREFIX):
