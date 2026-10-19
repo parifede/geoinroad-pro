@@ -13,13 +13,14 @@ _STORAGE_ATTEMPTS = 2
 
 
 class CredentialStore:
-    """Credenziali con password nel vault cifrato quando disponibile.
+    """Credenziali con le preferences come fonte affidabile.
 
-    La password vive nel SecureStorage (Keystore/Keychain). Nelle
-    SharedPreferences restano username e flag di presenza. Se il vault
-    non risponde dopo i tentativi, la password resta nelle preferences
-    come fallback: perdere l'accesso a ogni riavvio e' peggio. Appena il
-    vault torna disponibile, load_credentials migra e ripulisce.
+    Su alcuni dispositivi il SecureStorage (Keystore) e' instabile: la
+    scrittura sembra riuscire ma la lettura al riavvio fallisce o mostra
+    prompt biometrici, e l'utente perde l'accesso. Le SharedPreferences
+    (private dell'app, backup disabilitato) sono quindi la fonte di
+    verita'; il vault cifrato resta una copia aggiuntiva best-effort,
+    usata per recuperare le credenziali se le preferences si svuotano.
     """
 
     def __init__(self) -> None:
@@ -56,6 +57,23 @@ class CredentialStore:
                 continue
         return False
 
+    @staticmethod
+    async def _read_from_vault(
+        storage: fss.SecureStorage,
+    ) -> tuple[str | None, str | None]:
+        for _ in range(_STORAGE_ATTEMPTS):
+            try:
+                return await asyncio.wait_for(
+                    asyncio.gather(
+                        storage.get(USERNAME_KEY),
+                        storage.get(PASSWORD_KEY),
+                    ),
+                    timeout=_STORAGE_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                continue
+        return None, None
+
     async def save_credentials(
         self,
         *,
@@ -66,13 +84,12 @@ class CredentialStore:
         password: str,
     ) -> None:
         self._ensure_supported(page)
-        secure_ok = await self._store_in_vault(storage, username, password)
+        # Prima la fonte affidabile: qualunque cosa succeda dopo,
+        # al riavvio le credenziali ci sono.
         await preferences.set(USERNAME_KEY, username)
-        if secure_ok:
-            await preferences.remove(PASSWORD_KEY)
-        else:
-            await preferences.set(PASSWORD_KEY, password)
+        await preferences.set(PASSWORD_KEY, password)
         await preferences.set(CREDENTIALS_READY_KEY, True)
+        await self._store_in_vault(storage, username, password)
 
     async def load_credentials(
         self,
@@ -82,35 +99,27 @@ class CredentialStore:
         preferences: ft.SharedPreferences,
     ) -> tuple[str, str]:
         self._ensure_supported(page)
+        # Percorso veloce e affidabile: niente vault, niente prompt.
         username = await preferences.get(USERNAME_KEY)
-        password = None
-        try:
-            stored_username, password = await asyncio.wait_for(
-                asyncio.gather(
-                    storage.get(USERNAME_KEY),
-                    storage.get(PASSWORD_KEY),
-                ),
-                timeout=_STORAGE_TIMEOUT_SECONDS,
-            )
-            username = username or stored_username
-        except Exception:
-            password = None
+        password = await preferences.get(PASSWORD_KEY)
+        if username and password:
+            return username, password
 
-        legacy_password = await preferences.get(PASSWORD_KEY)
-        if not password and legacy_password:
-            password = legacy_password
-            # Il fallback resta nelle preferences finche' il vault non
-            # risponde: rimuoverlo prima bloccherebbe l'accesso al riavvio.
-            if await self._store_in_vault(storage, username or "", password):
-                await preferences.remove(PASSWORD_KEY)
-        elif password and legacy_password:
-            await preferences.remove(PASSWORD_KEY)
+        # Recupero dalla copia nel vault (es. build precedenti che
+        # salvavano solo li'); se riesce, ripristina le preferences
+        # cosi' i prossimi avvii sono immediati.
+        vault_username, vault_password = await self._read_from_vault(storage)
+        username = username or vault_username
+        password = password or vault_password
+        if username and password:
+            await preferences.set(USERNAME_KEY, username)
+            await preferences.set(PASSWORD_KEY, password)
+            await preferences.set(CREDENTIALS_READY_KEY, True)
+            return username, password
 
-        if not username or not password:
-            raise RuntimeError(
-                "Le credenziali protette non sono disponibili. Salvale di nuovo."
-            )
-        return username, password
+        raise RuntimeError(
+            "Le credenziali salvate non sono disponibili. Inseriscile di nuovo."
+        )
 
     async def clear_credentials(
         self,

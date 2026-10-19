@@ -50,7 +50,7 @@ class _RecordingStorage:
 
 
 class CredentialStoreTest(unittest.IsolatedAsyncioTestCase):
-    async def test_password_is_stored_only_in_secure_storage(self):
+    async def test_save_writes_reliable_copy_and_vault_copy(self):
         store = CredentialStore()
         preferences = _Preferences()
         storage = _RecordingStorage()
@@ -63,90 +63,19 @@ class CredentialStoreTest(unittest.IsolatedAsyncioTestCase):
             password="secret",
         )
 
-        self.assertEqual(storage.values[PASSWORD_KEY], "secret")
-        self.assertNotIn(PASSWORD_KEY, preferences.values)
+        # Fonte affidabile: le preferences hanno sempre tutto.
         self.assertEqual(preferences.values[USERNAME_KEY], "driver")
-        self.assertTrue(preferences.values[CREDENTIALS_READY_KEY])
-
-        username, password = await store.load_credentials(
-            page=_Page(),
-            storage=storage,
-            preferences=preferences,
-        )
-        self.assertEqual((username, password), ("driver", "secret"))
-
-    async def test_save_falls_back_to_preferences_when_vault_fails(self):
-        # Perdere le credenziali a ogni riavvio e' peggio del fallback:
-        # se il vault non risponde, l'accesso deve comunque sopravvivere.
-        store = CredentialStore()
-        preferences = _Preferences()
-
-        await store.save_credentials(
-            page=_Page(),
-            storage=_FailingStorage(),
-            preferences=preferences,
-            username="driver",
-            password="secret",
-        )
-
         self.assertEqual(preferences.values[PASSWORD_KEY], "secret")
         self.assertTrue(preferences.values[CREDENTIALS_READY_KEY])
+        # Copia aggiuntiva nel vault.
+        self.assertEqual(storage.values[PASSWORD_KEY], "secret")
 
-        username, password = await store.load_credentials(
-            page=_Page(),
-            storage=_FailingStorage(),
-            preferences=preferences,
-        )
-        self.assertEqual((username, password), ("driver", "secret"))
-
-    async def test_load_migrates_legacy_plaintext_password_into_vault(self):
+    async def test_load_uses_fast_path_without_touching_the_vault(self):
+        # Niente letture dal vault quando le preferences sono complete:
+        # su alcuni dispositivi il vault e' lento o mostra prompt biometrici.
         store = CredentialStore()
         preferences = _Preferences()
         storage = _RecordingStorage()
-        preferences.values.update(
-            {
-                CREDENTIALS_READY_KEY: True,
-                USERNAME_KEY: "driver",
-                PASSWORD_KEY: "legacy-secret",
-            }
-        )
-
-        username, password = await store.load_credentials(
-            page=_Page(),
-            storage=storage,
-            preferences=preferences,
-        )
-
-        self.assertEqual((username, password), ("driver", "legacy-secret"))
-        self.assertEqual(storage.values[PASSWORD_KEY], "legacy-secret")
-        self.assertNotIn(PASSWORD_KEY, preferences.values)
-
-    async def test_legacy_password_is_kept_if_vault_is_unavailable(self):
-        store = CredentialStore()
-        preferences = _Preferences()
-        preferences.values.update(
-            {
-                CREDENTIALS_READY_KEY: True,
-                USERNAME_KEY: "driver",
-                PASSWORD_KEY: "legacy-secret",
-            }
-        )
-
-        username, password = await store.load_credentials(
-            page=_Page(),
-            storage=_FailingStorage(),
-            preferences=preferences,
-        )
-
-        self.assertEqual((username, password), ("driver", "legacy-secret"))
-        self.assertEqual(preferences.values[PASSWORD_KEY], "legacy-secret")
-
-    async def test_load_scrubs_leftover_plaintext_when_vault_already_holds_password(self):
-        store = CredentialStore()
-        preferences = _Preferences()
-        storage = _RecordingStorage()
-        storage.values[PASSWORD_KEY] = "secret"
-        storage.values[USERNAME_KEY] = "driver"
         preferences.values.update(
             {
                 CREDENTIALS_READY_KEY: True,
@@ -162,7 +91,57 @@ class CredentialStoreTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual((username, password), ("driver", "secret"))
-        self.assertNotIn(PASSWORD_KEY, preferences.values)
+        self.assertEqual(storage.get_calls, 0)
+
+    async def test_save_and_load_survive_a_broken_vault(self):
+        store = CredentialStore()
+        preferences = _Preferences()
+
+        await store.save_credentials(
+            page=_Page(),
+            storage=_FailingStorage(),
+            preferences=preferences,
+            username="driver",
+            password="secret",
+        )
+        username, password = await store.load_credentials(
+            page=_Page(),
+            storage=_FailingStorage(),
+            preferences=preferences,
+        )
+
+        self.assertEqual((username, password), ("driver", "secret"))
+
+    async def test_load_recovers_from_vault_and_restores_preferences(self):
+        # Build precedenti salvavano solo nel vault: al primo avvio dopo
+        # l'aggiornamento le credenziali vengono recuperate e ricopiate.
+        store = CredentialStore()
+        preferences = _Preferences()
+        preferences.values[CREDENTIALS_READY_KEY] = True
+        storage = _RecordingStorage()
+        storage.values[USERNAME_KEY] = "driver"
+        storage.values[PASSWORD_KEY] = "secret"
+
+        username, password = await store.load_credentials(
+            page=_Page(),
+            storage=storage,
+            preferences=preferences,
+        )
+
+        self.assertEqual((username, password), ("driver", "secret"))
+        self.assertEqual(preferences.values[PASSWORD_KEY], "secret")
+        self.assertEqual(preferences.values[USERNAME_KEY], "driver")
+
+    async def test_load_raises_only_when_no_copy_exists(self):
+        store = CredentialStore()
+        preferences = _Preferences()
+
+        with self.assertRaises(RuntimeError):
+            await store.load_credentials(
+                page=_Page(),
+                storage=_RecordingStorage(),
+                preferences=preferences,
+            )
 
     async def test_clear_credentials_removes_fallback_values(self):
         store = CredentialStore()
@@ -186,8 +165,6 @@ class CredentialStoreTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(PASSWORD_KEY, preferences.values)
 
     def test_secure_storage_timeout_tolerates_slow_keystore(self):
-        # Il Keystore puo' essere lento alla prima apertura: un timeout
-        # troppo stretto faceva perdere le credenziali al riavvio.
         self.assertGreaterEqual(_STORAGE_TIMEOUT_SECONDS, 5)
         self.assertLessEqual(_STORAGE_TIMEOUT_SECONDS, 15)
 
