@@ -566,7 +566,7 @@
     return { start: "", end: "" };
   }
 
-  async function collectApiStats() {
+  async function collectApiStats(range) {
     const debug = {
       api_available: false,
       employee_id: "",
@@ -608,7 +608,7 @@
       };
     }
 
-    const { from, to } = currentMonthDateRange();
+    const { from, to } = range || currentMonthDateRange();
     const daySet = new Set();
     try {
       const calendarPayload = await axios.$get(
@@ -916,10 +916,16 @@
     return 50;
   }
 
-  async function collectExpandedStats() {
+  async function collectExpandedStats(options = {}) {
+    // Senza intervallo esplicito si sincronizza il mese corrente; con
+    // from/to (navigazione su periodi passati) si recupera quel periodo.
+    const hasCustomRange = !!(options.from && options.to);
+    const range = hasCustomRange
+      ? { from: String(options.from), to: String(options.to) }
+      : currentMonthDateRange();
     const payloads = [extractCandidateStats()];
     const fetches = [];
-    const apiPayload = await collectApiStats();
+    const apiPayload = await collectApiStats(range);
     if (apiPayload.rows.length || apiPayload.debug.api_available) {
       payloads.push(apiPayload);
     }
@@ -929,7 +935,7 @@
     queued.add(calendarUrl);
     queue.push(calendarUrl);
 
-    const { from, to } = currentMonthDateRange();
+    const { from, to } = range;
     const startDate = new Date(from + "T12:00:00");
     const endDate = new Date(to + "T12:00:00");
     for (let date = startDate; date <= endDate; date.setDate(date.getDate() + 1)) {
@@ -992,6 +998,13 @@
         addDateUrls(renderedQueue, renderedQueued, day);
       }
       if (renderedQueue.length === 0) return merged;
+    } else if (hasCustomRange) {
+      // Periodo passato senza dati: renderizza tutte le pagine del range.
+      for (let date = new Date(from + "T12:00:00"); date <= endDate; date.setDate(date.getDate() + 1)) {
+        for (const url of dateUrlsFor(localIsoDate(date))) {
+          addRenderedUrl(url);
+        }
+      }
     } else {
       addRenderedUrl(calendarUrl);
       for (let offset = -8; offset <= 8; offset++) {
@@ -999,7 +1012,10 @@
       }
     }
 
-    const renderedLimit = hasPositiveRows ? 20 : 28;
+    const rangeDays = Math.round((endDate - startDate) / 86400000) + 1;
+    const renderedLimit = hasPositiveRows
+      ? 20
+      : (hasCustomRange ? Math.min(2 * rangeDays, 62) : 28);
     for (let index = 0; index < renderedQueue.length && index < renderedLimit; index++) {
       const item = await loadRenderedStatsDocument(renderedQueue[index]);
       fetches.push(item.result);
@@ -1030,6 +1046,9 @@
     try {
       const quickPayload = extractCandidateStats();
       const backgroundSync = !!options.background;
+      // Per i periodi passati la pagina corrente non c'entra: niente
+      // risposta rapida, solo il report del range richiesto.
+      if (options.from && quickPayload.rows) quickPayload.rows = [];
       if (quickPayload.rows && quickPayload.rows.length) {
         quickPayload.debug = {
           ...quickPayload.debug,
@@ -1038,7 +1057,7 @@
         };
         emit(statsPrefix, quickPayload);
       }
-      const payload = await collectExpandedStats();
+      const payload = await collectExpandedStats(options);
       payload.debug = {
         ...(payload.debug || {}),
         background_sync: backgroundSync,

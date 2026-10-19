@@ -56,6 +56,7 @@ def build_dashboard_view(
                                     _period_filter(page, state, on_period_change),
                                     ft.Container(height=10),
                                     _period_nav(page, state, on_shift_period, on_reset_period),
+                                    _sync_status(state),
                                     ft.Container(height=10),
                                     _metrics_row(state),
                                     ft.Container(height=16),
@@ -241,6 +242,27 @@ def _period_nav(
                         if on_shift_period is not None
                         else None
                     ),
+                ),
+            ],
+        ),
+    )
+
+
+def _sync_status(state: AppState) -> ft.Control:
+    return ft.Container(
+        padding=ft.padding.symmetric(horizontal=16, vertical=2),
+        visible=bool(state.dashboard_status),
+        content=ft.Row(
+            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.ProgressRing(width=12, height=12, stroke_width=2, color=_ACCENT),
+                ft.Text(
+                    state.dashboard_status,
+                    size=11,
+                    color=_ACCENT,
+                    weight=ft.FontWeight.W_600,
+                    expand=True,
                 ),
             ],
         ),

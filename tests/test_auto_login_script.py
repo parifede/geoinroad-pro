@@ -57,6 +57,17 @@ class AutoLoginScriptTest(unittest.TestCase):
         self.assertIn("function localIsoDate(", script)
         self.assertNotIn("toISOString().slice(0, 10)", script)
 
+    def test_stats_collection_accepts_a_custom_date_range(self):
+        script = build_auto_login_script(username="user@example.test", password="secret")
+
+        # La dashboard puo' chiedere un periodo passato: from/to arrivano
+        # fino alle query API e alle pagine per-giorno da renderizzare.
+        self.assertIn("collectExpandedStats(options)", script)
+        self.assertIn("options.from && options.to", script)
+        self.assertIn("async function collectApiStats(range)", script)
+        self.assertIn("range || currentMonthDateRange()", script)
+        self.assertIn("Math.min(2 * rangeDays, 62)", script)
+
     def test_stats_payload_stays_small_enough_for_console_bridge(self):
         script = build_auto_login_script(username="user@example.test", password="secret")
 
@@ -138,7 +149,7 @@ class AutoLoginScriptTest(unittest.TestCase):
         self.assertIn("/geoinroad_api/planner/route", script)
         self.assertIn("renderedDates", script)
         self.assertIn("rowPriority(row) <= 20", script)
-        self.assertIn("renderedLimit = hasPositiveRows ? 20 : 28", script)
+        self.assertIn("renderedLimit = hasPositiveRows", script)
 
     def test_stats_merge_prefers_calendar_or_diary_turns_over_route_times(self):
         script = build_auto_login_script(username="user@example.test", password="secret")

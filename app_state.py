@@ -93,6 +93,8 @@ class AppState:
     timelog_daily_totals: list[dict] = field(default_factory=list)
     dashboard_period: str = "week"
     dashboard_anchor: str = ""
+    dashboard_status: str = ""
+    synced_periods: set = field(default_factory=set)
     database_path: str = ""
     javascript_mode_class = fwv.JavaScriptMode
 

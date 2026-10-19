@@ -4,23 +4,56 @@ from pathlib import Path
 
 
 class StatsButtonTest(unittest.TestCase):
-    def test_stats_button_scrapes_only_when_webview_is_live_then_opens_dashboard(self):
+    def test_stats_collection_works_from_dashboard_overlay_too(self):
         source = Path("main.py").read_text(encoding="utf-8")
         match = re.search(
-            r"async def request_work_stats\(\) -> None:\n(?P<body>.*?)(?=\n    async def )",
+            r"async def request_work_stats\(from_date: str = \"\", to_date: str = \"\"\) -> None:\n"
+            r"(?P<body>.*?)(?=\n    async def )",
             source,
             flags=re.S,
         )
         self.assertIsNotNone(match)
 
         body = match.group("body")
-        self.assertIn("page.route == ROUTE_WEBVIEW", body)
-        self.assertIn("state.webview_ref.current is not None", body)
+        # La WebView vive anche sotto la dashboard in overlay: la raccolta
+        # non deve piu' dipendere da page.route == ROUTE_WEBVIEW.
+        self.assertIn("webview_is_live()", body)
+        self.assertNotIn("page.route == ROUTE_WEBVIEW", body)
         self.assertIn("run_javascript", body)
-        self.assertIn("collectStats({background:false})", body)
+        self.assertIn("collectStats({options_json})", body)
+        self.assertIn('options["from"] = from_date', body)
         self.assertIn("return 'missing'", body)
         self.assertIn("Bridge statistiche non pronto", body)
         self.assertIn("await open_dashboard_fast()", body)
+
+    def test_period_navigation_syncs_missing_periods_from_portal(self):
+        source = Path("main.py").read_text(encoding="utf-8")
+
+        # Il tasto sync ricarica il periodo visualizzato...
+        self.assertIn("on_refresh_stats=sync_dashboard_period,", source)
+        sync_match = re.search(
+            r"async def sync_dashboard_period\(\) -> None:\n(?P<body>.*?)(?=\n    def )",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(sync_match)
+        self.assertIn("_period_bounds", sync_match.group("body"))
+        self.assertIn(
+            "await request_work_stats(start.isoformat(), end.isoformat())",
+            sync_match.group("body"),
+        )
+        self.assertIn("Sincronizzazione", sync_match.group("body"))
+
+        # ...e navigare su un periodo vuoto la avvia da sola, una volta sola.
+        empty_match = re.search(
+            r"def maybe_sync_empty_period\(\) -> None:\n(?P<body>.*?)(?=\n    async def )",
+            source,
+            flags=re.S,
+        )
+        self.assertIsNotNone(empty_match)
+        self.assertIn("state.synced_periods", empty_match.group("body"))
+        self.assertIn("page.run_task(sync_dashboard_period)", empty_match.group("body"))
+        self.assertIn("maybe_sync_empty_period()", source)
 
     def test_dashboard_opens_over_live_webview_so_scraping_can_finish(self):
         source = Path("main.py").read_text(encoding="utf-8")

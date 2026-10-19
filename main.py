@@ -244,7 +244,7 @@ def main(page: ft.Page):
                 on_period_change=set_dashboard_period,
                 on_shift_period=shift_dashboard_period,
                 on_reset_period=reset_dashboard_period,
-                on_refresh_stats=request_work_stats,
+                on_refresh_stats=sync_dashboard_period,
             ),
         )
 
@@ -285,6 +285,7 @@ def main(page: ft.Page):
             period = "month"
         state.dashboard_period = period
         await refresh_timelog_data()
+        maybe_sync_empty_period()
         if page.route == ROUTE_DASHBOARD and show_dashboard_over_live_webview():
             return
         build_views()
@@ -312,6 +313,7 @@ def main(page: ft.Page):
             "" if anchor == date.today() else anchor.isoformat()
         )
         await refresh_timelog_data()
+        maybe_sync_empty_period()
         if page.route == ROUTE_DASHBOARD and show_dashboard_over_live_webview():
             return
         build_views()
@@ -339,6 +341,7 @@ def main(page: ft.Page):
             state.scraped_stats = payload or {}
             await open_dashboard_fast()
             return
+        state.dashboard_status = ""
         if not payload or not payload.get("rows"):
             set_web_status("Nessun dato lavoro rilevato nella pagina corrente.")
             state.scraped_stats = payload or {}
@@ -361,33 +364,84 @@ def main(page: ft.Page):
         await refresh_timelog_data()
         if is_background:
             if page.route == ROUTE_DASHBOARD:
+                if show_dashboard_over_live_webview():
+                    return
                 build_views()
         else:
             if show_dashboard_over_live_webview():
                 return
             await go_to(ROUTE_DASHBOARD)
 
-    async def request_work_stats() -> None:
-        if (
-            page.route == ROUTE_WEBVIEW
-            and not page.web
+    def webview_is_live() -> bool:
+        # La WebView resta viva anche sotto la dashboard in overlay:
+        # la raccolta funziona da entrambe le schermate.
+        return (
+            not page.web
             and state.supports_embedded_webview(page)
             and state.webview_ref.current is not None
-        ):
+            and any(view.route == ROUTE_WEBVIEW for view in page.views)
+        )
+
+    async def request_work_stats(from_date: str = "", to_date: str = "") -> None:
+        if webview_is_live():
             try:
+                options = {"background": False}
+                if from_date and to_date:
+                    options["from"] = from_date
+                    options["to"] = to_date
+                options_json = json.dumps(options)
                 set_web_status("Raccolta statistiche lavoro avviata dal menu.")
                 result = await state.webview_ref.current.run_javascript(
                     "(function(){"
                     "if(!window.GeoinroadApp||!window.GeoinroadApp.collectStats){return 'missing';}"
-                    "window.GeoinroadApp.collectStats({background:false});"
+                    f"window.GeoinroadApp.collectStats({options_json});"
                     "return 'started';"
                     "})()"
                 )
                 if "missing" in str(result):
                     set_web_status("Bridge statistiche non pronto, apro i dati locali.")
+                    state.dashboard_status = (
+                        "Portale non pronto: riapri il diario e riprova."
+                    )
             except RuntimeError as exc:
                 set_web_status(f"WebView non disponibile, apro le statistiche locali: {exc}")
+                state.dashboard_status = ""
+        else:
+            state.dashboard_status = (
+                "Per sincronizzare apri prima il diario, poi torna alle statistiche."
+            )
         await open_dashboard_fast()
+
+    async def sync_dashboard_period() -> None:
+        anchor = state.dashboard_anchor or date.today().isoformat()
+        start, end = state.timelog_repository._period_bounds(
+            state.dashboard_period, anchor
+        )
+        state.synced_periods.add(f"{state.dashboard_period}:{start.isoformat()}")
+        state.dashboard_status = (
+            f"Sincronizzazione {start.strftime('%d/%m')} – {end.strftime('%d/%m')} "
+            "dal portale in corso..."
+        )
+        if page.route == ROUTE_DASHBOARD:
+            show_dashboard_over_live_webview()
+        await request_work_stats(start.isoformat(), end.isoformat())
+
+    def maybe_sync_empty_period() -> None:
+        if any(
+            item.get("entries") or item.get("status")
+            for item in (state.timelog_daily_totals or [])
+        ):
+            return
+        if not webview_is_live():
+            return
+        anchor = state.dashboard_anchor or date.today().isoformat()
+        start, _ = state.timelog_repository._period_bounds(
+            state.dashboard_period, anchor
+        )
+        key = f"{state.dashboard_period}:{start.isoformat()}"
+        if key in state.synced_periods:
+            return
+        page.run_task(sync_dashboard_period)
 
     async def save_credentials_in_background(username: str, password: str) -> None:
         try:
@@ -860,7 +914,7 @@ def main(page: ft.Page):
                     on_period_change=set_dashboard_period,
                     on_shift_period=shift_dashboard_period,
                     on_reset_period=reset_dashboard_period,
-                    on_refresh_stats=request_work_stats,
+                    on_refresh_stats=sync_dashboard_period,
                 )
             )
             page.drawer = None
