@@ -3,13 +3,22 @@ import asyncio
 import flet as ft
 import flet_secure_storage as fss
 
-from app_config import CREDENTIALS_READY_KEY, LOGIN_URL, PASSWORD_KEY, USERNAME_KEY
+from app_config import (
+    CREDENTIALS_READY_KEY,
+    GATE_ENABLED_KEY,
+    GATE_TOKEN_KEY,
+    LOGIN_URL,
+    PASSWORD_KEY,
+    USERNAME_KEY,
+)
 
 # Il Keystore Android puo' essere lento alla prima apertura o mostrare un
 # prompt biometrico: un timeout stretto faceva fallire il salvataggio e
 # l'utente perdeva le credenziali a ogni riavvio.
 _STORAGE_TIMEOUT_SECONDS = 8
 _STORAGE_ATTEMPTS = 2
+# Il cancello biometrico aspetta l'interazione dell'utente col prompt.
+_GATE_TIMEOUT_SECONDS = 90
 
 
 class CredentialStore:
@@ -120,6 +129,60 @@ class CredentialStore:
         raise RuntimeError(
             "Le credenziali salvate non sono disponibili. Inseriscile di nuovo."
         )
+
+    async def enroll_gate(
+        self,
+        *,
+        page: ft.Page,
+        gate_storage: fss.SecureStorage,
+        preferences: ft.SharedPreferences,
+    ) -> bool:
+        """Attiva il cancello biometrico scrivendo il token protetto.
+
+        La scrittura mostra il prompt biometrico/PIN di sistema: se
+        l'utente lo completa il cancello si attiva, se lo annulla (o il
+        dispositivo non supporta la protezione) resta disattivato e
+        l'app continua a entrare direttamente.
+        """
+        if page.web:
+            return False
+        try:
+            await asyncio.wait_for(
+                gate_storage.set(GATE_TOKEN_KEY, "ok"),
+                timeout=_GATE_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            await preferences.set(GATE_ENABLED_KEY, False)
+            return False
+        await preferences.set(GATE_ENABLED_KEY, True)
+        return True
+
+    async def verify_gate(
+        self,
+        *,
+        page: ft.Page,
+        gate_storage: fss.SecureStorage,
+        preferences: ft.SharedPreferences,
+    ) -> bool:
+        """True se l'ingresso e' autorizzato.
+
+        Con il cancello attivo, leggere il token richiede biometria o
+        PIN di sistema: annullare o fallire la verifica nega l'accesso
+        automatico (le credenziali restano al sicuro dove sono).
+        """
+        if page.web:
+            return True
+        enabled = await preferences.get(GATE_ENABLED_KEY)
+        if not enabled:
+            return True
+        try:
+            value = await asyncio.wait_for(
+                gate_storage.get(GATE_TOKEN_KEY),
+                timeout=_GATE_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            return False
+        return value == "ok"
 
     async def clear_credentials(
         self,

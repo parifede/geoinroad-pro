@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Awaitable, Callable
 
 import flet as ft
@@ -616,9 +616,19 @@ def _stats_card(state: AppState) -> ft.Control:
 def _chart_title(period: str, anchor_date: str | None = None) -> str:
     return {
         "day": "Giorno selezionato",
-        "week": "Settimana Geoin ROAD",
+        "week": _week_title(anchor_date),
         "month": f"Mese {_month_name(anchor_date)}",
     }.get(period, "Giorni rilevati")
+
+
+def _week_title(anchor_date: str | None) -> str:
+    parsed = _parse_anchor_date(anchor_date)
+    if parsed is None:
+        return "Settimana corrente"
+    monday = parsed - timedelta(days=parsed.weekday())
+    if monday <= date.today() <= monday + timedelta(days=6):
+        return "Settimana corrente"
+    return "Settimana"
 
 
 def _month_name(anchor_date: str | None = None) -> str:

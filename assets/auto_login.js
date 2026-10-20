@@ -348,8 +348,20 @@
     }
 
     if (isCalendar) {
-      const calendarHeaderMatch = bodyText.match(/\b\d{1,2}\s+([A-Za-z]{3})\s*~/i);
-      const calendarDefaultMonth = calendarHeaderMatch ? calendarHeaderMatch[1] : "";
+      // L'intestazione copre una settimana che puo' cavalcare due mesi
+      // ("27 lug ~ 02 ago"): i giorni con numero minore del giorno
+      // iniziale appartengono al secondo mese.
+      const calendarHeaderMatch = bodyText.match(/\b(\d{1,2})\s+([A-Za-zÀ-ÿ]{3})\s*~\s*(\d{1,2})\s+([A-Za-zÀ-ÿ]{3})/i);
+      const headerStartDay = calendarHeaderMatch ? parseInt(calendarHeaderMatch[1], 10) : 0;
+      const calendarDefaultMonth = calendarHeaderMatch ? calendarHeaderMatch[2] : "";
+      const headerEndMonth = calendarHeaderMatch ? calendarHeaderMatch[4] : "";
+
+      function monthForCalendarDay(dayNumber) {
+        if (headerEndMonth && headerStartDay && dayNumber < headerStartDay) {
+          return headerEndMonth;
+        }
+        return calendarDefaultMonth;
+      }
       // Ogni riga del calendario e': giorno, numero, SIGLA badge (S pilota,
       // W copilota, A abortive, M malattia, I infortunio, F/FA ferie,
       // GF festivo, R/RC riposo, altre = assenze), stato testuale e stazione.
@@ -357,7 +369,7 @@
       // tipi non ancora noti; il testo di stato e' libero.
       const calendarPattern = /\b(LUN|MAR|MER|GIO|VEN|SAB|DOM)\s+(\d{1,2})(?:\s+([A-Za-z]{3}))?\s+([A-Z]{1,2})\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'. ]{0,30}?)\s*\(([^)]+)\)/g;
       for (const match of bodyText.matchAll(calendarPattern)) {
-        const monthLabel = match[3] || calendarDefaultMonth;
+        const monthLabel = match[3] || monthForCalendarDay(parseInt(match[2], 10));
         const workDate = isoFromItalianDay(match[2], monthLabel);
         const sigla = match[4].toUpperCase();
         // Giornate pagate di default 8 ore: presenze (S/W) senza orario
@@ -981,6 +993,17 @@
       renderedQueue.push(url);
     }
 
+    // Le sigle delle giornate (S, W, A, M, F, GF, R...) vivono solo nelle
+    // pagine calendario renderizzate, una settimana per pagina: una
+    // renderizzata per settimana del periodo copre tutti i tipi giorno.
+    const weekAnchors = [];
+    for (let d = new Date(from + "T12:00:00"); d <= endDate; d.setDate(d.getDate() + 7)) {
+      weekAnchors.push(localIsoDate(d));
+    }
+    for (const anchor of weekAnchors) {
+      addRenderedUrl(absoluteDriverUrl("/driver/calendar?date=" + encodeURIComponent(anchor)));
+    }
+
     let merged = mergeStatsPayloads(payloads, fetches);
     const hasPositiveRows = merged.rows.some((row) => parseFloat(row.value || "0") > 0);
     const renderedDates = new Set();
@@ -997,7 +1020,6 @@
       for (const day of Array.from(renderedDates).sort().reverse().slice(0, 10)) {
         addDateUrls(renderedQueue, renderedQueued, day);
       }
-      if (renderedQueue.length === 0) return merged;
     } else if (hasCustomRange) {
       // Periodo passato senza dati: renderizza tutte le pagine del range.
       for (let date = new Date(from + "T12:00:00"); date <= endDate; date.setDate(date.getDate() + 1)) {
@@ -1013,9 +1035,9 @@
     }
 
     const rangeDays = Math.round((endDate - startDate) / 86400000) + 1;
-    const renderedLimit = hasPositiveRows
+    const renderedLimit = weekAnchors.length + (hasPositiveRows
       ? 20
-      : (hasCustomRange ? Math.min(2 * rangeDays, 62) : 28);
+      : (hasCustomRange ? Math.min(2 * rangeDays, 62) : 28));
     for (let index = 0; index < renderedQueue.length && index < renderedLimit; index++) {
       const item = await loadRenderedStatsDocument(renderedQueue[index]);
       fetches.push(item.result);

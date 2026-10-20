@@ -102,6 +102,20 @@ def main(page: ft.Page):
             preferences
         )
         if state.credentials_available:
+            gate_ok = await credential_store.verify_gate(
+                page=page,
+                gate_storage=state.gate_storage,
+                preferences=preferences,
+            )
+            if not gate_ok:
+                set_lock_status(
+                    "Autenticazione annullata. Premi 'Sblocca' per riprovare "
+                    "con biometria o PIN.",
+                    ft.Colors.RED_700,
+                )
+                build_views()
+                page.run_task(ensure_timelog_repository)
+                return
             try:
                 username, password = await credential_store.load_credentials(
                     page=page,
@@ -455,6 +469,19 @@ def main(page: ft.Page):
             state.credentials_available = True
         except Exception as exc:
             set_web_status(f"Accesso avviato, salvataggio locale non riuscito: {exc}")
+            return
+        # Propone il prompt biometrico: completandolo si attiva il cancello
+        # d'ingresso; annullandolo l'app continua a entrare direttamente.
+        enrolled = await credential_store.enroll_gate(
+            page=page,
+            gate_storage=state.gate_storage,
+            preferences=preferences,
+        )
+        set_web_status(
+            "Blocco biometrico attivato: te lo chiedero' a ogni apertura."
+            if enrolled
+            else "Blocco biometrico non attivato: l'app entrera' direttamente."
+        )
 
     def reports_base_dir() -> Path:
         if state.database_path:
@@ -643,6 +670,18 @@ def main(page: ft.Page):
             "Richiesta di sblocco in corso...",
             ft.Colors.BLUE_700,
         )
+
+        gate_ok = await credential_store.verify_gate(
+            page=page,
+            gate_storage=state.gate_storage,
+            preferences=preferences,
+        )
+        if not gate_ok:
+            set_lock_status(
+                "Autenticazione non riuscita. Riprova o inserisci la password.",
+                ft.Colors.RED_700,
+            )
+            return
 
         try:
             username, password = await credential_store.load_credentials(

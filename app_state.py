@@ -45,6 +45,39 @@ class AppState:
             ),
         )
     )
+    # Storage separato che RICHIEDE biometria/PIN: contiene solo il token
+    # del cancello d'ingresso, mai le credenziali.
+    gate_storage: fss.SecureStorage = field(
+        default_factory=lambda: fss.SecureStorage(
+            android_options=fss.AndroidOptions(
+                reset_on_error=True,
+                migrate_on_algorithm_change=True,
+                enforce_biometrics=True,
+                key_cipher_algorithm=fss.KeyCipherAlgorithm.AES_GCM_NO_PADDING,
+                storage_cipher_algorithm=fss.StorageCipherAlgorithm.AES_GCM_NO_PADDING,
+                shared_preferences_name="geoinroad_pro_gate",
+                preferences_key_prefix="geoinroad_gate",
+                biometric_prompt_title="Sblocca Geoinroad Pro",
+                biometric_prompt_subtitle="Conferma la tua identita' per entrare",
+            ),
+            ios_options=fss.IOSOptions(
+                access_control_flags=[
+                    fss.AccessControlFlag.BIOMETRY_ANY,
+                    fss.AccessControlFlag.OR,
+                    fss.AccessControlFlag.DEVICE_PASSCODE,
+                ],
+                accessibility=fss.KeychainAccessibility.FIRST_UNLOCK,
+            ),
+            macos_options=fss.MacOsOptions(
+                access_control_flags=[
+                    fss.AccessControlFlag.BIOMETRY_ANY,
+                    fss.AccessControlFlag.OR,
+                    fss.AccessControlFlag.DEVICE_PASSCODE,
+                ],
+                accessibility=fss.KeychainAccessibility.FIRST_UNLOCK,
+            ),
+        )
+    )
     webview_ref: ft.Ref[fwv.WebView] = field(
         default_factory=lambda: ft.Ref[fwv.WebView]()
     )

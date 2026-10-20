@@ -149,7 +149,12 @@ class AutoLoginScriptTest(unittest.TestCase):
         self.assertIn("/geoinroad_api/planner/route", script)
         self.assertIn("renderedDates", script)
         self.assertIn("rowPriority(row) <= 20", script)
-        self.assertIn("renderedLimit = hasPositiveRows", script)
+        self.assertIn("renderedLimit = weekAnchors.length", script)
+        # Una pagina calendario renderizzata per settimana: e' l'unica
+        # fonte delle sigle giornata, anche a cavallo di due mesi.
+        self.assertIn("weekAnchors.push(localIsoDate(d))", script)
+        self.assertIn("monthForCalendarDay(", script)
+        self.assertIn("headerEndMonth", script)
 
     def test_stats_merge_prefers_calendar_or_diary_turns_over_route_times(self):
         script = build_auto_login_script(username="user@example.test", password="secret")

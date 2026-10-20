@@ -310,6 +310,30 @@ class TimelogRepository:
                 (normalized_account_id, capture_day.isoformat()),
             )
             if day_statuses:
+                # L'API segnala le assenze senza tipo ("riposo" generico):
+                # non deve degradare uno stato piu' informativo (malattia,
+                # ferie, festivo...) salvato da una lettura del calendario.
+                day_placeholders = ",".join("?" for _ in day_statuses)
+                existing_statuses = {
+                    row[0]: str(row[1] or "")
+                    for row in conn.execute(
+                        f"""
+                        SELECT day, status FROM day_states
+                        WHERE account_id = ? AND day IN ({day_placeholders})
+                        """,
+                        [normalized_account_id, *day_statuses.keys()],
+                    ).fetchall()
+                }
+                merged_statuses = {}
+                for day, status in day_statuses.items():
+                    current = existing_statuses.get(day, "")
+                    if current and (
+                        self._STATUS_RANKS.get(current, 0)
+                        > self._STATUS_RANKS.get(status, 0)
+                    ):
+                        merged_statuses[day] = current
+                    else:
+                        merged_statuses[day] = status
                 conn.executemany(
                     """
                     INSERT INTO day_states (account_id, day, status)
@@ -319,7 +343,7 @@ class TimelogRepository:
                     """,
                     [
                         (normalized_account_id, day, status)
-                        for day, status in day_statuses.items()
+                        for day, status in merged_statuses.items()
                     ],
                 )
             conn.commit()

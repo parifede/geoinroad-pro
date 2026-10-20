@@ -1,6 +1,11 @@
 import unittest
 
-from app_config import CREDENTIALS_READY_KEY, PASSWORD_KEY, USERNAME_KEY
+from app_config import (
+    CREDENTIALS_READY_KEY,
+    GATE_ENABLED_KEY,
+    PASSWORD_KEY,
+    USERNAME_KEY,
+)
 from services.credential_store import CredentialStore, _STORAGE_TIMEOUT_SECONDS
 
 
@@ -163,6 +168,49 @@ class CredentialStoreTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(CREDENTIALS_READY_KEY, preferences.values)
         self.assertNotIn(USERNAME_KEY, preferences.values)
         self.assertNotIn(PASSWORD_KEY, preferences.values)
+
+    async def test_gate_enrolls_and_blocks_when_verification_fails(self):
+        store = CredentialStore()
+        preferences = _Preferences()
+        gate = _RecordingStorage()
+
+        self.assertTrue(
+            await store.enroll_gate(
+                page=_Page(), gate_storage=gate, preferences=preferences
+            )
+        )
+        self.assertTrue(preferences.values[GATE_ENABLED_KEY])
+        # Verifica riuscita: il token protetto e' leggibile.
+        self.assertTrue(
+            await store.verify_gate(
+                page=_Page(), gate_storage=gate, preferences=preferences
+            )
+        )
+        # Biometria annullata o fallita: ingresso negato.
+        self.assertFalse(
+            await store.verify_gate(
+                page=_Page(), gate_storage=_FailingStorage(), preferences=preferences
+            )
+        )
+
+    async def test_gate_stays_disabled_when_enrollment_is_cancelled(self):
+        store = CredentialStore()
+        preferences = _Preferences()
+
+        self.assertFalse(
+            await store.enroll_gate(
+                page=_Page(), gate_storage=_FailingStorage(), preferences=preferences
+            )
+        )
+        self.assertFalse(preferences.values[GATE_ENABLED_KEY])
+        # Cancello spento: l'app entra direttamente.
+        self.assertTrue(
+            await store.verify_gate(
+                page=_Page(),
+                gate_storage=_FailingStorage(),
+                preferences=preferences,
+            )
+        )
 
     def test_secure_storage_timeout_tolerates_slow_keystore(self):
         self.assertGreaterEqual(_STORAGE_TIMEOUT_SECONDS, 5)
