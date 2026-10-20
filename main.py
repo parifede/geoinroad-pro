@@ -8,6 +8,7 @@ import flet as ft
 from app_config import (
     ACTION_PREFIX,
     APP_TITLE,
+    APP_VERSION,
     BRAND_DARK,
     BUG_REPORT_WHATSAPP_NUMBER,
     ERROR_PREFIX,
@@ -496,6 +497,7 @@ def main(page: ft.Page):
     async def report_bug() -> None:
         report = {
             "captured_at": datetime.now(timezone.utc).isoformat(),
+            "app_version": APP_VERSION,
             "route": page.route,
             "last_loaded_url": state.last_loaded_url,
             "last_console_message": state.last_console_message,

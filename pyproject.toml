@@ -1,6 +1,6 @@
 [project]
 name = "geoinroad-pro"
-version = "1.1.0"
+version = "1.2.0"
 description = "Timelog manager per Dimetior"
 dependencies = [
     "flet==0.84.0",

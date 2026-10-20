@@ -1,4 +1,6 @@
 APP_TITLE = "Geoinroad Pro"
+# Tenere allineata alla versione in pyproject.toml.
+APP_VERSION = "1.2.0"
 LOGIN_URL = "https://geoinroad.dimetior.com/login"
 
 ROUTE_LOCK = "/"

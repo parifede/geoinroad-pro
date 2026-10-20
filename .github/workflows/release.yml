@@ -43,8 +43,25 @@ jobs:
 
       # flet build scarica da solo il Flutter SDK richiesto (3.41.x)
       # e il toolchain Android mancante grazie a --yes.
+      # Con il secret ANDROID_SIGNING_PASSWORD l'APK viene firmato con la
+      # chiave fissa in ci/upload-keystore.jks: cosi' Android accetta gli
+      # aggiornamenti sopra l'app installata invece di chiedere la
+      # disinstallazione (che cancella credenziali e dati).
       - name: Build APK
-        run: flet build apk --yes --no-rich-output --skip-flutter-doctor
+        env:
+          SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
+        run: |
+          SIGN_ARGS=""
+          if [ -n "$SIGNING_PASSWORD" ]; then
+            SIGN_ARGS="--android-signing-key-store ci/upload-keystore.jks \
+              --android-signing-key-store-password $SIGNING_PASSWORD \
+              --android-signing-key-password $SIGNING_PASSWORD \
+              --android-signing-key-alias upload"
+            echo "Firma con chiave fissa attiva."
+          else
+            echo "ATTENZIONE: secret ANDROID_SIGNING_PASSWORD assente, firma debug casuale."
+          fi
+          flet build apk --yes --no-rich-output --skip-flutter-doctor $SIGN_ARGS
 
       - name: Prepara artefatto
         env:

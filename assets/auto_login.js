@@ -771,6 +771,15 @@
     }
   }
 
+  function renderedDocLooksReady(doc) {
+    try {
+      const text = (doc.body && doc.body.innerText) || "";
+      return /CALENDARIO|Presente|Libero|Malattia|Ferie|Abortive|Festiva|\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}/i.test(text);
+    } catch (_) {
+      return false;
+    }
+  }
+
   async function loadRenderedStatsDocument(url) {
     const result = {
       url,
@@ -780,13 +789,16 @@
       time_ranges: 0,
       start_count: 0,
       end_count: 0,
+      waited_ms: 0,
       error: "",
     };
 
     return new Promise((resolve) => {
       const iframe = document.createElement("iframe");
       let settled = false;
+      let pollId = 0;
       let timeoutId = 0;
+      const startedAt = Date.now();
       iframe.style.cssText = [
         "position:fixed",
         "left:-10000px",
@@ -800,7 +812,9 @@
       function finish() {
         if (settled) return;
         settled = true;
+        clearInterval(pollId);
         clearTimeout(timeoutId);
+        result.waited_ms = Date.now() - startedAt;
         try {
           const doc = iframe.contentDocument || iframe.contentWindow?.document;
           if (!doc) throw new Error("iframe document unavailable");
@@ -819,8 +833,26 @@
         }
       }
 
-      iframe.addEventListener("load", () => setTimeout(finish, 1600), { once: true });
-      timeoutId = setTimeout(finish, 5200);
+      // La SPA del portale si idrata DOPO l'evento load: fotografare la
+      // pagina a tempo fisso la coglieva ancora vuota. Si attende che il
+      // contenuto compaia davvero (poll ogni 500 ms), con un piccolo
+      // margine extra per le righe ancora in arrivo.
+      iframe.addEventListener(
+        "load",
+        () => {
+          pollId = setInterval(() => {
+            try {
+              const doc = iframe.contentDocument || iframe.contentWindow?.document;
+              if (doc && renderedDocLooksReady(doc)) {
+                clearInterval(pollId);
+                setTimeout(finish, 800);
+              }
+            } catch (_) {}
+          }, 500);
+        },
+        { once: true }
+      );
+      timeoutId = setTimeout(finish, 15000);
       iframe.src = url;
       document.body.appendChild(iframe);
     });
@@ -1038,7 +1070,13 @@
     const renderedLimit = weekAnchors.length + (hasPositiveRows
       ? 20
       : (hasCustomRange ? Math.min(2 * rangeDays, 62) : 28));
+    // Budget di tempo complessivo: le settimane di calendario sono in
+    // testa alla coda e passano sempre; le pagine per-giorno riempiono
+    // il tempo che resta.
+    const renderBudgetMs = 120000;
+    const renderStartedAt = Date.now();
     for (let index = 0; index < renderedQueue.length && index < renderedLimit; index++) {
+      if (Date.now() - renderStartedAt > renderBudgetMs) break;
       const item = await loadRenderedStatsDocument(renderedQueue[index]);
       fetches.push(item.result);
       if (item.payload) {

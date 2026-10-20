@@ -143,6 +143,10 @@ class AutoLoginScriptTest(unittest.TestCase):
         self.assertIn("fallbackDate", script)
         self.assertIn("loadRenderedStatsDocument", script)
         self.assertIn("contentDocument", script)
+        # La SPA si idrata dopo l'evento load: la foto della pagina
+        # aspetta che il contenuto compaia, con budget di tempo totale.
+        self.assertIn("renderedDocLooksReady", script)
+        self.assertIn("renderBudgetMs", script)
         self.assertIn("collectApiStats", script)
         self.assertIn("window.$nuxt", script)
         self.assertIn("/geoinroad_api/employees/driver_calendar", script)

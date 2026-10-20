@@ -2,7 +2,7 @@ import asyncio
 
 import flet as ft
 
-from app_config import BRAND_ACCENT, BRAND_DARK, ROUTE_SPLASH
+from app_config import APP_VERSION, BRAND_ACCENT, BRAND_DARK, ROUTE_SPLASH
 
 
 async def _pulse_logo(page: ft.Page, logo_frame: ft.Container) -> None:
@@ -71,6 +71,11 @@ def build_splash_view(page: ft.Page) -> ft.View:
                                 "Caricamento",
                                 size=12,
                                 weight=ft.FontWeight.W_600,
+                                color=muted,
+                            ),
+                            ft.Text(
+                                f"v{APP_VERSION}",
+                                size=11,
                                 color=muted,
                             ),
                         ],
