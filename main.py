@@ -109,9 +109,10 @@ def main(page: ft.Page):
                 preferences=preferences,
             )
             if not gate_ok:
+                state.gate_locked = True
                 set_lock_status(
-                    "Autenticazione annullata. Premi 'Sblocca' per riprovare "
-                    "con biometria o PIN.",
+                    "Autenticazione annullata. Premi 'Sblocca con impronta' per "
+                    "riprovare, oppure reinserisci la password.",
                     ft.Colors.RED_700,
                 )
                 build_views()
@@ -120,7 +121,6 @@ def main(page: ft.Page):
             try:
                 username, password = await credential_store.load_credentials(
                     page=page,
-                    storage=state.storage,
                     preferences=preferences,
                 )
                 state.session_unlocked = True
@@ -132,6 +132,7 @@ def main(page: ft.Page):
                 await go_to(ROUTE_WEBVIEW)
                 page.run_task(ensure_timelog_repository)
                 page.run_task(refresh_timelog_data)
+                page.run_task(maybe_offer_biometric_gate)
                 return
             except Exception as exc:
                 set_lock_status(
@@ -462,7 +463,6 @@ def main(page: ft.Page):
         try:
             await credential_store.save_credentials(
                 page=page,
-                storage=state.storage,
                 preferences=preferences,
                 username=username,
                 password=password,
@@ -471,18 +471,64 @@ def main(page: ft.Page):
         except Exception as exc:
             set_web_status(f"Accesso avviato, salvataggio locale non riuscito: {exc}")
             return
-        # Propone il prompt biometrico: completandolo si attiva il cancello
-        # d'ingresso; annullandolo l'app continua a entrare direttamente.
-        enrolled = await credential_store.enroll_gate(
+        await maybe_offer_biometric_gate()
+
+    def show_notice(message: str) -> None:
+        set_web_status(message)
+        page.show_dialog(ft.SnackBar(ft.Text(message), duration=4000))
+
+    async def enable_biometric_gate() -> None:
+        # La scrittura del token protetto mostra il prompt di sistema
+        # (impronta, volto o PIN del telefono).
+        _, message = await credential_store.enroll_gate(
             page=page,
             gate_storage=state.gate_storage,
             preferences=preferences,
         )
-        set_web_status(
-            "Blocco biometrico attivato: te lo chiedero' a ogni apertura."
-            if enrolled
-            else "Blocco biometrico non attivato: l'app entrera' direttamente."
+        show_notice(message)
+
+    async def maybe_offer_biometric_gate() -> None:
+        # Chiesto una sola volta per account: chi ha gia' scelto (anche
+        # "Non ora") lo cambia dal menu rapido.
+        if page.web or state.gate_offer_shown:
+            return
+        if await credential_store.gate_choice(preferences) is not None:
+            return
+        state.gate_offer_shown = True
+
+        async def accept() -> None:
+            page.pop_dialog()
+            await enable_biometric_gate()
+
+        async def decline() -> None:
+            page.pop_dialog()
+            await credential_store.decline_gate(preferences)
+            show_notice(
+                "Sblocco biometrico non attivo. Puoi attivarlo dal menu, "
+                "voce 'Sblocco biometrico'."
+            )
+
+        page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                title=ft.Text("Sblocco con impronta"),
+                content=ft.Text(
+                    "Vuoi proteggere l'app con impronta digitale, volto o PIN "
+                    "del telefono? Te lo chiedero' a ogni apertura."
+                ),
+                actions=[
+                    ft.TextButton("Non ora", on_click=lambda _: page.run_task(decline)),
+                    ft.TextButton("Attiva", on_click=lambda _: page.run_task(accept)),
+                ],
+            )
         )
+
+    async def toggle_biometric_gate() -> None:
+        if await credential_store.gate_choice(preferences):
+            await credential_store.decline_gate(preferences)
+            show_notice("Sblocco biometrico disattivato: l'app entrera' direttamente.")
+            return
+        await enable_biometric_gate()
 
     def reports_base_dir() -> Path:
         if state.database_path:
@@ -612,6 +658,7 @@ def main(page: ft.Page):
         state.cached_password = password
         state.account_id = state.timelog_repository.account_id_for_username(username)
         state.session_unlocked = True
+        state.gate_locked = False
         state.login_failure_notified = False
         if state.password_field_ref.current is not None:
             state.password_field_ref.current.value = ""
@@ -627,7 +674,6 @@ def main(page: ft.Page):
         try:
             await credential_store.clear_credentials(
                 page=page,
-                storage=state.storage,
                 preferences=preferences,
             )
             await ensure_timelog_repository()
@@ -650,6 +696,7 @@ def main(page: ft.Page):
         state.account_id = "default"
         state.session_unlocked = False
         state.background_stats_started = False
+        state.gate_offer_shown = False
         if state.username_field_ref.current is not None:
             state.username_field_ref.current.value = ""
         if state.password_field_ref.current is not None:
@@ -688,7 +735,6 @@ def main(page: ft.Page):
         try:
             username, password = await credential_store.load_credentials(
                 page=page,
-                storage=state.storage,
                 preferences=preferences,
             )
         except RuntimeError as exc:
@@ -702,6 +748,7 @@ def main(page: ft.Page):
             return
 
         state.session_unlocked = True
+        state.gate_locked = False
         state.cached_username = username
         state.cached_password = password
         state.account_id = state.timelog_repository.account_id_for_username(username)
@@ -717,7 +764,6 @@ def main(page: ft.Page):
         try:
             await credential_store.clear_credentials(
                 page=page,
-                storage=state.storage,
                 preferences=preferences,
             )
             await ensure_timelog_repository()
@@ -732,6 +778,7 @@ def main(page: ft.Page):
         state.account_id = "default"
         state.session_unlocked = False
         state.background_stats_started = False
+        state.gate_offer_shown = False
         await go_to(ROUTE_LOCK)
 
     async def open_vault() -> None:
@@ -913,6 +960,7 @@ def main(page: ft.Page):
             on_report_bug=report_bug,
             on_logout=logout,
             on_open_vault=open_vault,
+            on_toggle_biometric=toggle_biometric_gate,
             on_page_started=on_page_started,
             on_page_ended=on_page_ended,
             on_progress=on_progress,

@@ -5,8 +5,8 @@ import flet_secure_storage as fss
 import flet_webview as fwv
 
 from app_config import (
-    ANDROID_PREFERENCES_PREFIX,
-    ANDROID_SHARED_PREFERENCES_NAME,
+    GATE_PREFERENCES_PREFIX,
+    GATE_SHARED_PREFERENCES_NAME,
     LOGIN_URL,
 )
 from services.timelog_repository import TimelogRepository
@@ -14,39 +14,11 @@ from services.timelog_repository import TimelogRepository
 
 @dataclass
 class AppState:
-    storage: fss.SecureStorage = field(
-        default_factory=lambda: fss.SecureStorage(
-            android_options=fss.AndroidOptions(
-                reset_on_error=True,
-                migrate_on_algorithm_change=True,
-                enforce_biometrics=False,
-                key_cipher_algorithm=fss.KeyCipherAlgorithm.AES_GCM_NO_PADDING,
-                storage_cipher_algorithm=fss.StorageCipherAlgorithm.AES_GCM_NO_PADDING,
-                shared_preferences_name=ANDROID_SHARED_PREFERENCES_NAME,
-                preferences_key_prefix=ANDROID_PREFERENCES_PREFIX,
-                biometric_prompt_title="Sblocca Geoinroad Pro",
-                biometric_prompt_subtitle="Usa biometria o credenziali dispositivo",
-            ),
-            ios_options=fss.IOSOptions(
-                access_control_flags=[
-                    fss.AccessControlFlag.BIOMETRY_ANY,
-                    fss.AccessControlFlag.OR,
-                    fss.AccessControlFlag.DEVICE_PASSCODE,
-                ],
-                accessibility=fss.KeychainAccessibility.FIRST_UNLOCK,
-            ),
-            macos_options=fss.MacOsOptions(
-                access_control_flags=[
-                    fss.AccessControlFlag.BIOMETRY_ANY,
-                    fss.AccessControlFlag.OR,
-                    fss.AccessControlFlag.DEVICE_PASSCODE,
-                ],
-                accessibility=fss.KeychainAccessibility.FIRST_UNLOCK,
-            ),
-        )
-    )
-    # Storage separato che RICHIEDE biometria/PIN: contiene solo il token
-    # del cancello d'ingresso, mai le credenziali.
+    # Unico SecureStorage dell'app: RICHIEDE biometria/PIN e contiene solo
+    # il token del cancello d'ingresso, mai le credenziali (che stanno
+    # nelle preferences). Un secondo SecureStorage aperto nello stesso
+    # processo ne prenderebbe il posto nel plugin nativo e il prompt non
+    # comparirebbe piu'.
     gate_storage: fss.SecureStorage = field(
         default_factory=lambda: fss.SecureStorage(
             android_options=fss.AndroidOptions(
@@ -55,8 +27,8 @@ class AppState:
                 enforce_biometrics=True,
                 key_cipher_algorithm=fss.KeyCipherAlgorithm.AES_GCM_NO_PADDING,
                 storage_cipher_algorithm=fss.StorageCipherAlgorithm.AES_GCM_NO_PADDING,
-                shared_preferences_name="geoinroad_pro_gate",
-                preferences_key_prefix="geoinroad_gate",
+                shared_preferences_name=GATE_SHARED_PREFERENCES_NAME,
+                preferences_key_prefix=GATE_PREFERENCES_PREFIX,
                 biometric_prompt_title="Sblocca Geoinroad Pro",
                 biometric_prompt_subtitle="Conferma la tua identita' per entrare",
             ),
@@ -113,6 +85,10 @@ class AppState:
     autologin_injected: bool = False
     login_failure_notified: bool = False
     background_stats_started: bool = False
+    gate_offer_shown: bool = False
+    # Cancello attivo e verifica non superata: la schermata di accesso
+    # offre il pulsante per riprovare con impronta/PIN.
+    gate_locked: bool = False
     last_loaded_url: str = LOGIN_URL
     last_console_message: str = ""
     scraped_stats: dict = field(default_factory=dict)

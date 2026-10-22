@@ -135,6 +135,29 @@ def build_lock_screen(
                                     ),
                                 ],
                             ),
+                            *(
+                                [
+                                    ft.Container(height=12),
+                                    ft.Row(
+                                        controls=[
+                                            ft.OutlinedButton(
+                                                "Sblocca con impronta",
+                                                expand=True,
+                                                icon=ft.Icons.FINGERPRINT,
+                                                on_click=lambda _: page.run_task(on_unlock),
+                                                style=ft.ButtonStyle(
+                                                    color=_ACCENT,
+                                                    side=ft.BorderSide(1, _ACCENT),
+                                                    shape=ft.RoundedRectangleBorder(radius=14),
+                                                    padding=ft.padding.symmetric(vertical=18),
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ]
+                                if state.gate_locked and state.credentials_available
+                                else []
+                            ),
                             ft.Container(height=20),
                             ft.TextButton(
                                 "Rimuovi credenziali salvate",

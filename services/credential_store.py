@@ -12,24 +12,20 @@ from app_config import (
     USERNAME_KEY,
 )
 
-# Il Keystore Android puo' essere lento alla prima apertura o mostrare un
-# prompt biometrico: un timeout stretto faceva fallire il salvataggio e
-# l'utente perdeva le credenziali a ogni riavvio.
-_STORAGE_TIMEOUT_SECONDS = 8
-_STORAGE_ATTEMPTS = 2
 # Il cancello biometrico aspetta l'interazione dell'utente col prompt.
 _GATE_TIMEOUT_SECONDS = 90
+_GATE_TOKEN_VALUE = "ok"
 
 
 class CredentialStore:
-    """Credenziali con le preferences come fonte affidabile.
+    """Credenziali nelle preferences, cancello biometrico nel Keystore.
 
-    Su alcuni dispositivi il SecureStorage (Keystore) e' instabile: la
-    scrittura sembra riuscire ma la lettura al riavvio fallisce o mostra
-    prompt biometrici, e l'utente perde l'accesso. Le SharedPreferences
-    (private dell'app, backup disabilitato) sono quindi la fonte di
-    verita'; il vault cifrato resta una copia aggiuntiva best-effort,
-    usata per recuperare le credenziali se le preferences si svuotano.
+    Le SharedPreferences (private dell'app, backup disabilitato) sono la
+    fonte di verita' delle credenziali. Il SecureStorage serve solo al
+    cancello d'ingresso: il plugin nativo ha un'unica istanza per processo
+    e la prima configurazione usata vince, quindi un secondo vault "senza
+    biometria" aperto prima rendeva il cancello silenzioso (nessun prompt).
+    Per questo l'app apre un solo SecureStorage, quello del cancello.
     """
 
     def __init__(self) -> None:
@@ -46,89 +42,40 @@ class CredentialStore:
         saved = await preferences.get(CREDENTIALS_READY_KEY)
         return bool(saved)
 
-    @staticmethod
-    async def _store_in_vault(
-        storage: fss.SecureStorage,
-        username: str,
-        password: str,
-    ) -> bool:
-        for _ in range(_STORAGE_ATTEMPTS):
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(
-                        storage.set(USERNAME_KEY, username),
-                        storage.set(PASSWORD_KEY, password),
-                    ),
-                    timeout=_STORAGE_TIMEOUT_SECONDS,
-                )
-                return True
-            except Exception:
-                continue
-        return False
-
-    @staticmethod
-    async def _read_from_vault(
-        storage: fss.SecureStorage,
-    ) -> tuple[str | None, str | None]:
-        for _ in range(_STORAGE_ATTEMPTS):
-            try:
-                return await asyncio.wait_for(
-                    asyncio.gather(
-                        storage.get(USERNAME_KEY),
-                        storage.get(PASSWORD_KEY),
-                    ),
-                    timeout=_STORAGE_TIMEOUT_SECONDS,
-                )
-            except Exception:
-                continue
-        return None, None
-
     async def save_credentials(
         self,
         *,
         page: ft.Page,
-        storage: fss.SecureStorage,
         preferences: ft.SharedPreferences,
         username: str,
         password: str,
     ) -> None:
         self._ensure_supported(page)
-        # Prima la fonte affidabile: qualunque cosa succeda dopo,
-        # al riavvio le credenziali ci sono.
         await preferences.set(USERNAME_KEY, username)
         await preferences.set(PASSWORD_KEY, password)
         await preferences.set(CREDENTIALS_READY_KEY, True)
-        await self._store_in_vault(storage, username, password)
 
     async def load_credentials(
         self,
         *,
         page: ft.Page,
-        storage: fss.SecureStorage,
         preferences: ft.SharedPreferences,
     ) -> tuple[str, str]:
         self._ensure_supported(page)
-        # Percorso veloce e affidabile: niente vault, niente prompt.
         username = await preferences.get(USERNAME_KEY)
         password = await preferences.get(PASSWORD_KEY)
         if username and password:
             return username, password
-
-        # Recupero dalla copia nel vault (es. build precedenti che
-        # salvavano solo li'); se riesce, ripristina le preferences
-        # cosi' i prossimi avvii sono immediati.
-        vault_username, vault_password = await self._read_from_vault(storage)
-        username = username or vault_username
-        password = password or vault_password
-        if username and password:
-            await preferences.set(USERNAME_KEY, username)
-            await preferences.set(PASSWORD_KEY, password)
-            await preferences.set(CREDENTIALS_READY_KEY, True)
-            return username, password
-
         raise RuntimeError(
             "Le credenziali salvate non sono disponibili. Inseriscile di nuovo."
         )
+
+    async def gate_choice(self, preferences: ft.SharedPreferences) -> bool | None:
+        """True/False se l'utente ha gia' scelto, None se non gli e' stato chiesto."""
+        value = await preferences.get(GATE_ENABLED_KEY)
+        if value is None:
+            return None
+        return bool(value)
 
     async def enroll_gate(
         self,
@@ -136,26 +83,34 @@ class CredentialStore:
         page: ft.Page,
         gate_storage: fss.SecureStorage,
         preferences: ft.SharedPreferences,
-    ) -> bool:
+    ) -> tuple[bool, str]:
         """Attiva il cancello biometrico scrivendo il token protetto.
 
-        La scrittura mostra il prompt biometrico/PIN di sistema: se
-        l'utente lo completa il cancello si attiva, se lo annulla (o il
-        dispositivo non supporta la protezione) resta disattivato e
-        l'app continua a entrare direttamente.
+        La scrittura mostra il prompt biometrico/PIN di sistema. Il token
+        viene riletto: solo se torna identico il cancello si considera
+        attivo (un errore "assorbito" dal plugin non deve chiudere fuori
+        l'utente al prossimo avvio).
         """
         if page.web:
-            return False
+            return False, "Lo sblocco biometrico e' disponibile solo sull'app Android."
         try:
             await asyncio.wait_for(
-                gate_storage.set(GATE_TOKEN_KEY, "ok"),
+                gate_storage.set(GATE_TOKEN_KEY, _GATE_TOKEN_VALUE),
                 timeout=_GATE_TIMEOUT_SECONDS,
             )
-        except Exception:
-            await preferences.set(GATE_ENABLED_KEY, False)
-            return False
+            value = await asyncio.wait_for(
+                gate_storage.get(GATE_TOKEN_KEY),
+                timeout=_GATE_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            return False, self._gate_error_message(exc)
+        if value != _GATE_TOKEN_VALUE:
+            return False, "Verifica non completata. Riprova dal menu."
         await preferences.set(GATE_ENABLED_KEY, True)
-        return True
+        return True, "Sblocco biometrico attivo: te lo chiedero' a ogni apertura."
+
+    async def decline_gate(self, preferences: ft.SharedPreferences) -> None:
+        await preferences.set(GATE_ENABLED_KEY, False)
 
     async def verify_gate(
         self,
@@ -172,8 +127,7 @@ class CredentialStore:
         """
         if page.web:
             return True
-        enabled = await preferences.get(GATE_ENABLED_KEY)
-        if not enabled:
+        if not await preferences.get(GATE_ENABLED_KEY):
             return True
         try:
             value = await asyncio.wait_for(
@@ -182,26 +136,27 @@ class CredentialStore:
             )
         except Exception:
             return False
-        return value == "ok"
+        return value == _GATE_TOKEN_VALUE
+
+    @staticmethod
+    def _gate_error_message(exc: Exception) -> str:
+        text = str(exc)
+        if "BIOMETRIC_UNAVAILABLE" in text or "no PIN" in text or "enrolled" in text:
+            return (
+                "Nessuna impronta o blocco schermo sul telefono: impostali "
+                "nelle impostazioni di Android e riprova dal menu."
+            )
+        return "Sblocco biometrico non attivato (verifica annullata)."
 
     async def clear_credentials(
         self,
         *,
         page: ft.Page,
-        storage: fss.SecureStorage,
         preferences: ft.SharedPreferences,
     ) -> None:
         self._ensure_supported(page)
         await preferences.remove(USERNAME_KEY)
         await preferences.remove(PASSWORD_KEY)
         await preferences.remove(CREDENTIALS_READY_KEY)
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(
-                    storage.remove(USERNAME_KEY),
-                    storage.remove(PASSWORD_KEY),
-                ),
-                timeout=_STORAGE_TIMEOUT_SECONDS,
-            )
-        except Exception:
-            pass
+        # Al prossimo accesso la scelta sulla biometria viene riproposta.
+        await preferences.remove(GATE_ENABLED_KEY)

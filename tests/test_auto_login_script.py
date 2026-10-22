@@ -38,12 +38,14 @@ class AutoLoginScriptTest(unittest.TestCase):
     def test_stats_scraper_attributes_hours_to_correct_day(self):
         script = build_auto_login_script(username="user@example.test", password="secret")
 
-        # Le pagine con ?date= sono relative a un solo giorno: la data URL vince.
-        self.assertIn("if (sourceDateMatch) return sourceDateMatch[1];", script)
+        # La SPA puo' ignorare ?date=: vale la data mostrata dalla pagina,
+        # e senza data visibile le righe giornaliere vengono scartate.
+        self.assertIn("if (pageDate) return pageDate;", script)
+        self.assertIn("const dayRowsAllowed = !(sourceDateMatch && !shownDate);", script)
         # Le pagine calendario non producono righe orario generiche (giorni diversi
         # finirebbero tutti sulla stessa data di fallback).
         self.assertIn("isCalendarUrl", script)
-        self.assertIn("if (!isCalendarUrl) {", script)
+        self.assertIn("if (!isCalendarUrl && dayRowsAllowed) {", script)
         # Le righe keyword (es. "Totale 173") non possono diventare ore giornaliere.
         self.assertIn("plausibleHours", script)
         self.assertIn("numericValue <= 24", script)
@@ -112,15 +114,13 @@ class AutoLoginScriptTest(unittest.TestCase):
         self.assertIn('paidDefault ? "8.00" : "0"', script)
         self.assertIn('"dom/calendar-default"', script)
         self.assertIn("/-default/i.test(source)) return 5;", script)
-        # Solo S e W (pilota/copilota) espandono le pagine diario.
-        self.assertIn("function isWorkedMarker(", script)
-        self.assertIn("if (marker) return isWorkedMarker(marker);", script)
-        # Anche l'API calendario segnala i giorni non lavorati, con campioni
-        # diagnostici per mappare i tipi di assenza reali — ma mai per oggi
-        # o il futuro, dove lo stato non e' ancora definitivo.
-        self.assertIn('work_marker: "R"', script)
+        # Anche l'API calendario segnala i giorni non lavorati, tipizzati
+        # con la mappa activity_id -> sigla imparata dal calendario; mai per
+        # oggi o il futuro, dove lo stato non e' ancora definitivo.
+        self.assertIn('(item.present ? "W" : "R")', script)
         self.assertIn("calendar_samples", script)
-        self.assertIn("if (String(day) >= localIsoDate()) continue;", script)
+        self.assertIn("type_stats", script)
+        self.assertIn("if (!item.present && day >= today) continue;", script)
 
     def test_calendar_year_follows_nearest_month_across_new_year(self):
         script = build_auto_login_script(username="user@example.test", password="secret")
@@ -135,10 +135,8 @@ class AutoLoginScriptTest(unittest.TestCase):
         script = build_auto_login_script(username="user@example.test", password="secret")
 
         self.assertIn("collectExpandedStats", script)
-        self.assertIn('credentials: "include"', script)
         self.assertIn("/driver/calendar", script)
         self.assertIn("?date=", script)
-        self.assertIn('a[href*="/driver/route/"]', script)
         self.assertIn("sourceDateMatch", script)
         self.assertIn("fallbackDate", script)
         self.assertIn("loadRenderedStatsDocument", script)
@@ -151,12 +149,13 @@ class AutoLoginScriptTest(unittest.TestCase):
         self.assertIn("window.$nuxt", script)
         self.assertIn("/geoinroad_api/employees/driver_calendar", script)
         self.assertIn("/geoinroad_api/planner/route", script)
-        self.assertIn("renderedDates", script)
-        self.assertIn("rowPriority(row) <= 20", script)
-        self.assertIn("renderedLimit = weekAnchors.length", script)
-        # Una pagina calendario renderizzata per settimana: e' l'unica
-        # fonte delle sigle giornata, anche a cavallo di due mesi.
-        self.assertIn("weekAnchors.push(localIsoDate(d))", script)
+        # Il calendario ignora ?date= e mostra sempre la settimana
+        # corrente: le settimane passate si leggono premendo la freccia
+        # indietro, e la mappa dei tipi giorno resta salvata nel browser.
+        self.assertIn("renderCalendarWeeks", script)
+        self.assertIn("findPreviousWeekControl", script)
+        self.assertIn("geoinroad_pro_day_types_v1", script)
+        self.assertIn("merged.sync_range = { from, to }", script)
         self.assertIn("monthForCalendarDay(", script)
         self.assertIn("headerEndMonth", script)
 
@@ -164,7 +163,9 @@ class AutoLoginScriptTest(unittest.TestCase):
         script = build_auto_login_script(username="user@example.test", password="secret")
 
         self.assertIn("bestPriorityByDate", script)
-        self.assertIn("rowPriority(row) !== bestPriorityByDate.get(row.date)", script)
+        self.assertIn("priority !== bestPriorityByDate.get(row.date)", script)
+        # Un solo default da 8 ore per giorno, qualunque fonte lo proponga.
+        self.assertIn('row.date + "|default"', script)
         self.assertIn("shiftKeys", script)
         self.assertIn("planner\\/route", script)
         self.assertIn("driver_calendar", script)

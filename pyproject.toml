@@ -1,6 +1,6 @@
 [project]
 name = "geoinroad-pro"
-version = "1.2.0"
+version = "1.3.0"
 description = "Timelog manager per Dimetior"
 dependencies = [
     "flet==0.84.0",
@@ -21,6 +21,13 @@ adaptive_icon_background = "#ffffff"
 [tool.flet.splash]
 color = "#1A1A1A"
 dark_color = "#1A1A1A"
+
+# flet-secure-storage 0.84 fissa flutter_secure_storage 10.0.0, il cui
+# prompt biometrico su Android non funziona: su Android 9-10 non si apre
+# (manca il pulsante "annulla" obbligatorio) e dopo un annullamento ogni
+# nuovo tentativo fallisce. La 10.3.4 corregge entrambi a parita' di API.
+[tool.flet.flutter.pubspec.dependency_overrides]
+flutter_secure_storage = "10.3.4"
 
 [tool.flet.android.permission]
 "android.permission.INTERNET" = true

@@ -1,4 +1,6 @@
+import tomllib
 import unittest
+from pathlib import Path
 
 from app_config import (
     CREDENTIALS_READY_KEY,
@@ -6,7 +8,7 @@ from app_config import (
     PASSWORD_KEY,
     USERNAME_KEY,
 )
-from services.credential_store import CredentialStore, _STORAGE_TIMEOUT_SECONDS
+from services.credential_store import CredentialStore
 
 
 class _Page:
@@ -54,101 +56,47 @@ class _RecordingStorage:
         self.values.pop(key, None)
 
 
+class _SwallowingStorage(_RecordingStorage):
+    """Plugin che "assorbe" l'errore: la scrittura riesce ma non salva nulla."""
+
+    async def set(self, key, value):
+        return "Data has been reset"
+
+
+class _NoLockScreenStorage(_FailingStorage):
+    async def set(self, key, value):
+        raise RuntimeError("BIOMETRIC_UNAVAILABLE: device has no PIN")
+
+
 class CredentialStoreTest(unittest.IsolatedAsyncioTestCase):
-    async def test_save_writes_reliable_copy_and_vault_copy(self):
+    async def test_credentials_live_in_preferences(self):
         store = CredentialStore()
         preferences = _Preferences()
-        storage = _RecordingStorage()
 
         await store.save_credentials(
             page=_Page(),
-            storage=storage,
             preferences=preferences,
             username="driver",
             password="secret",
         )
 
-        # Fonte affidabile: le preferences hanno sempre tutto.
         self.assertEqual(preferences.values[USERNAME_KEY], "driver")
         self.assertEqual(preferences.values[PASSWORD_KEY], "secret")
         self.assertTrue(preferences.values[CREDENTIALS_READY_KEY])
-        # Copia aggiuntiva nel vault.
-        self.assertEqual(storage.values[PASSWORD_KEY], "secret")
-
-    async def test_load_uses_fast_path_without_touching_the_vault(self):
-        # Niente letture dal vault quando le preferences sono complete:
-        # su alcuni dispositivi il vault e' lento o mostra prompt biometrici.
-        store = CredentialStore()
-        preferences = _Preferences()
-        storage = _RecordingStorage()
-        preferences.values.update(
-            {
-                CREDENTIALS_READY_KEY: True,
-                USERNAME_KEY: "driver",
-                PASSWORD_KEY: "secret",
-            }
+        self.assertEqual(
+            await store.load_credentials(page=_Page(), preferences=preferences),
+            ("driver", "secret"),
         )
 
-        username, password = await store.load_credentials(
-            page=_Page(),
-            storage=storage,
-            preferences=preferences,
-        )
-
-        self.assertEqual((username, password), ("driver", "secret"))
-        self.assertEqual(storage.get_calls, 0)
-
-    async def test_save_and_load_survive_a_broken_vault(self):
-        store = CredentialStore()
-        preferences = _Preferences()
-
-        await store.save_credentials(
-            page=_Page(),
-            storage=_FailingStorage(),
-            preferences=preferences,
-            username="driver",
-            password="secret",
-        )
-        username, password = await store.load_credentials(
-            page=_Page(),
-            storage=_FailingStorage(),
-            preferences=preferences,
-        )
-
-        self.assertEqual((username, password), ("driver", "secret"))
-
-    async def test_load_recovers_from_vault_and_restores_preferences(self):
-        # Build precedenti salvavano solo nel vault: al primo avvio dopo
-        # l'aggiornamento le credenziali vengono recuperate e ricopiate.
+    async def test_load_raises_when_credentials_are_missing(self):
         store = CredentialStore()
         preferences = _Preferences()
         preferences.values[CREDENTIALS_READY_KEY] = True
-        storage = _RecordingStorage()
-        storage.values[USERNAME_KEY] = "driver"
-        storage.values[PASSWORD_KEY] = "secret"
-
-        username, password = await store.load_credentials(
-            page=_Page(),
-            storage=storage,
-            preferences=preferences,
-        )
-
-        self.assertEqual((username, password), ("driver", "secret"))
-        self.assertEqual(preferences.values[PASSWORD_KEY], "secret")
-        self.assertEqual(preferences.values[USERNAME_KEY], "driver")
-
-    async def test_load_raises_only_when_no_copy_exists(self):
-        store = CredentialStore()
-        preferences = _Preferences()
 
         with self.assertRaises(RuntimeError):
-            await store.load_credentials(
-                page=_Page(),
-                storage=_RecordingStorage(),
-                preferences=preferences,
-            )
+            await store.load_credentials(page=_Page(), preferences=preferences)
 
-    async def test_clear_credentials_removes_fallback_values(self):
+    async def test_clear_credentials_removes_values_and_gate_choice(self):
         store = CredentialStore()
         preferences = _Preferences()
         preferences.values.update(
@@ -156,30 +104,29 @@ class CredentialStoreTest(unittest.IsolatedAsyncioTestCase):
                 CREDENTIALS_READY_KEY: True,
                 USERNAME_KEY: "driver",
                 PASSWORD_KEY: "secret",
+                GATE_ENABLED_KEY: True,
             }
         )
 
-        await store.clear_credentials(
-            page=_Page(),
-            storage=_FailingStorage(),
-            preferences=preferences,
-        )
+        await store.clear_credentials(page=_Page(), preferences=preferences)
 
         self.assertNotIn(CREDENTIALS_READY_KEY, preferences.values)
         self.assertNotIn(USERNAME_KEY, preferences.values)
         self.assertNotIn(PASSWORD_KEY, preferences.values)
+        # Il prossimo accesso ripropone la scelta sulla biometria.
+        self.assertIsNone(await store.gate_choice(preferences))
 
     async def test_gate_enrolls_and_blocks_when_verification_fails(self):
         store = CredentialStore()
         preferences = _Preferences()
         gate = _RecordingStorage()
 
-        self.assertTrue(
-            await store.enroll_gate(
-                page=_Page(), gate_storage=gate, preferences=preferences
-            )
+        self.assertIsNone(await store.gate_choice(preferences))
+        enabled, _ = await store.enroll_gate(
+            page=_Page(), gate_storage=gate, preferences=preferences
         )
-        self.assertTrue(preferences.values[GATE_ENABLED_KEY])
+        self.assertTrue(enabled)
+        self.assertTrue(await store.gate_choice(preferences))
         # Verifica riuscita: il token protetto e' leggibile.
         self.assertTrue(
             await store.verify_gate(
@@ -193,28 +140,67 @@ class CredentialStoreTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-    async def test_gate_stays_disabled_when_enrollment_is_cancelled(self):
+    async def test_cancelled_enrollment_leaves_the_choice_open(self):
         store = CredentialStore()
         preferences = _Preferences()
 
-        self.assertFalse(
-            await store.enroll_gate(
-                page=_Page(), gate_storage=_FailingStorage(), preferences=preferences
-            )
+        enabled, message = await store.enroll_gate(
+            page=_Page(), gate_storage=_FailingStorage(), preferences=preferences
         )
-        self.assertFalse(preferences.values[GATE_ENABLED_KEY])
+
+        self.assertFalse(enabled)
+        self.assertIn("annullata", message)
+        self.assertIsNone(await store.gate_choice(preferences))
         # Cancello spento: l'app entra direttamente.
         self.assertTrue(
             await store.verify_gate(
-                page=_Page(),
-                gate_storage=_FailingStorage(),
-                preferences=preferences,
+                page=_Page(), gate_storage=_FailingStorage(), preferences=preferences
             )
         )
 
-    def test_secure_storage_timeout_tolerates_slow_keystore(self):
-        self.assertGreaterEqual(_STORAGE_TIMEOUT_SECONDS, 5)
-        self.assertLessEqual(_STORAGE_TIMEOUT_SECONDS, 15)
+    async def test_enrollment_requires_the_token_to_read_back(self):
+        # Un errore "assorbito" dal plugin non deve attivare il cancello,
+        # altrimenti al prossimo avvio l'utente resterebbe chiuso fuori.
+        store = CredentialStore()
+        preferences = _Preferences()
+
+        enabled, _ = await store.enroll_gate(
+            page=_Page(), gate_storage=_SwallowingStorage(), preferences=preferences
+        )
+
+        self.assertFalse(enabled)
+        self.assertIsNone(await store.gate_choice(preferences))
+
+    async def test_enrollment_explains_a_missing_screen_lock(self):
+        store = CredentialStore()
+        enabled, message = await store.enroll_gate(
+            page=_Page(), gate_storage=_NoLockScreenStorage(), preferences=_Preferences()
+        )
+
+        self.assertFalse(enabled)
+        self.assertIn("blocco schermo", message)
+
+    async def test_declined_gate_is_remembered(self):
+        store = CredentialStore()
+        preferences = _Preferences()
+
+        await store.decline_gate(preferences)
+
+        self.assertIs(await store.gate_choice(preferences), False)
+
+    def test_app_opens_a_single_secure_storage(self):
+        # Il plugin nativo ha un'istanza per processo: un secondo
+        # SecureStorage ne prenderebbe la configurazione e il prompt
+        # biometrico non comparirebbe piu'.
+        source = Path("app_state.py").read_text(encoding="utf-8")
+        self.assertEqual(source.count("fss.SecureStorage("), 1)
+        self.assertIn("enforce_biometrics=True", source)
+
+    def test_native_plugin_is_pinned_to_a_working_release(self):
+        with open("pyproject.toml", "rb") as handle:
+            pyproject = tomllib.load(handle)
+        overrides = pyproject["tool"]["flet"]["flutter"]["pubspec"]["dependency_overrides"]
+        self.assertEqual(overrides["flutter_secure_storage"], "10.3.4")
 
 
 if __name__ == "__main__":
