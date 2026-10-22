@@ -343,6 +343,72 @@ class TimelogRepositoryTest(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(remaining, 0)
 
+    def test_full_period_sync_replaces_stale_hours_and_wrong_day_states(self):
+        repo = TimelogRepository()
+        test_dir = Path.cwd() / "tmp-test"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        repo.db_path = test_dir / "geoinroad_pro_sync_range_test.sqlite3"
+        if repo.db_path.exists():
+            repo.db_path.unlink()
+        repo._ensure_schema()
+        account_id = "acct_sync_range"
+
+        # Versione precedente: il turno di oggi copiato su giorni passati
+        # (pagine ?date= che mostravano sempre oggi) e malattia gia' nota.
+        repo._save_snapshot_sync(
+            repo.db_path,
+            {
+                "captured_at": "2026-08-20T10:00:00+00:00",
+                "rows": [
+                    {"label": "Turno 06:25-15:15", "value": "8.83", "date": "2026-08-10"},
+                    {"label": "Turno 06:25-15:15", "value": "8.83", "date": "2026-07-31"},
+                    {"label": "Malattia", "value": 0, "date": "2026-08-12",
+                     "status": "Malattia", "work_marker": "M"},
+                ],
+            },
+            account_id=account_id,
+        )
+        # Nuova sincronizzazione completa di agosto: il 10 era ferie, il
+        # 12 arriva come riposo generico (tipo non ancora imparato).
+        repo._save_snapshot_sync(
+            repo.db_path,
+            {
+                "captured_at": "2026-08-20T10:00:00+00:00",
+                "sync_range": {"from": "2026-08-01", "to": "2026-08-31"},
+                "rows": [
+                    {"label": "Ferie e ROL", "value": "8.00", "date": "2026-08-10",
+                     "status": "Ferie e ROL", "work_marker": "FA",
+                     "source": "geoinroad_api/employees/driver_calendar-default"},
+                    {"label": "Libero", "value": "0", "date": "2026-08-12",
+                     "status": "Libero", "work_marker": "R"},
+                    {"label": "Turno 06:25-15:00", "value": "8.58", "date": "2026-08-13"},
+                ],
+            },
+            account_id=account_id,
+        )
+
+        daily = repo._fetch_period_daily_totals_sync(
+            repo.db_path,
+            account_id=account_id,
+            period="month",
+            anchor_date="2026-08-15",
+        )
+        by_day = {item["day"]: item for item in daily}
+        # Il turno copiato sparisce: al suo posto le 8 ore di ferie.
+        self.assertEqual(by_day["2026-08-10"]["status"], "ferie")
+        self.assertAlmostEqual(by_day["2026-08-10"]["total_value"], 8.0)
+        self.assertEqual(by_day["2026-08-10"]["entries"], 1)
+        # Il riposo generico non cancella la malattia gia' registrata.
+        self.assertEqual(by_day["2026-08-12"]["status"], "malattia")
+        self.assertAlmostEqual(by_day["2026-08-13"]["total_value"], 8.58)
+        # Fuori dal periodo sincronizzato non si tocca nulla.
+        with repo._connect(repo.db_path) as conn:
+            july = conn.execute(
+                "SELECT COUNT(*) FROM timelogs WHERE account_id = ? AND work_date = ?",
+                (account_id, "2026-07-31"),
+            ).fetchone()[0]
+        self.assertEqual(july, 1)
+
     def test_one_time_cleanup_removes_legacy_keyword_and_implausible_rows(self):
         repo = TimelogRepository()
         test_dir = Path.cwd() / "tmp-test"

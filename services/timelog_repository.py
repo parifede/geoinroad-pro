@@ -299,6 +299,7 @@ class TimelogRepository:
         ]
         normalized_account_id = account_id or "default"
         day_statuses = self._collect_day_statuses(payload, captured_at, capture_day)
+        sync_range = self._sync_range(payload, capture_day)
         with self._connect(db_path) as conn:
             conn.execute(
                 """
@@ -309,10 +310,26 @@ class TimelogRepository:
                 """,
                 (normalized_account_id, capture_day.isoformat()),
             )
+            if sync_range:
+                # Il portale ha restituito il calendario completo del
+                # periodo: le ore salvate prima (anche attribuite al giorno
+                # sbagliato da versioni precedenti) vengono sostituite.
+                conn.execute(
+                    """
+                    DELETE FROM timelogs
+                    WHERE account_id = ?
+                      AND value > 0
+                      AND work_date >= ?
+                      AND work_date <= ?
+                    """,
+                    (normalized_account_id, *sync_range),
+                )
             if day_statuses:
-                # L'API segnala le assenze senza tipo ("riposo" generico):
-                # non deve degradare uno stato piu' informativo (malattia,
-                # ferie, festivo...) salvato da una lettura del calendario.
+                # L'API puo' segnalare un'assenza senza tipo ("riposo"
+                # generico): non deve degradare uno stato piu' informativo
+                # (malattia, ferie, festivo...) gia' salvato. Ogni altro
+                # stato nuovo sostituisce il vecchio, cosi' una nuova
+                # lettura corregge i giorni salvati male.
                 day_placeholders = ",".join("?" for _ in day_statuses)
                 existing_statuses = {
                     row[0]: str(row[1] or "")
@@ -327,10 +344,7 @@ class TimelogRepository:
                 merged_statuses = {}
                 for day, status in day_statuses.items():
                     current = existing_statuses.get(day, "")
-                    if current and (
-                        self._STATUS_RANKS.get(current, 0)
-                        > self._STATUS_RANKS.get(status, 0)
-                    ):
+                    if status == "riposo" and current in self._TYPED_ABSENCES:
                         merged_statuses[day] = current
                     else:
                         merged_statuses[day] = status
@@ -618,6 +632,29 @@ class TimelogRepository:
         "riposo": 1,
         "assenza": 1,
     }
+
+    _TYPED_ABSENCES = {
+        "abortive",
+        "malattia",
+        "infortunio",
+        "ferie",
+        "permesso",
+        "festivo",
+        "assenza",
+    }
+
+    def _sync_range(self, payload: dict, capture_day: date) -> tuple[str, str] | None:
+        raw = payload.get("sync_range") or {}
+        if not isinstance(raw, dict):
+            return None
+        start = self._parse_date(str(raw.get("from") or ""))
+        end = self._parse_date(str(raw.get("to") or ""))
+        if start is None or end is None or start > end:
+            return None
+        end = min(end, capture_day)
+        if start > end:
+            return None
+        return start.isoformat(), end.isoformat()
 
     def _collect_day_statuses(
         self,

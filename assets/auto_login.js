@@ -241,9 +241,44 @@
     }));
     const sourceDateMatch = String(sourceUrl || "").match(/[?&]date=(\d{4}-\d{2}-\d{2})/);
     const isCalendarUrl = /\/calendar/i.test(String(sourceUrl || ""));
+    // La SPA puo' ignorare ?date= e mostrare comunque la giornata di oggi:
+    // vale la data che la pagina mostra davvero (campo DATA). Se la pagina
+    // ne chiede una ma non ne mostra nessuna, le righe giornaliere non
+    // possono essere attribuite con certezza e vengono scartate.
+    const shownDate = isCalendarUrl ? "" : displayedPageDate();
+    const pageDate = shownDate;
+    const dayRowsAllowed = !(sourceDateMatch && !shownDate);
+
+    function isoFromAnyDate(text) {
+      const value = String(text || "").trim();
+      let match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (match) return match[1] + "-" + match[2] + "-" + match[3];
+      match = value.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
+      if (match) {
+        return [match[3], match[2].padStart(2, "0"), match[1].padStart(2, "0")].join("-");
+      }
+      match = value.match(/^(?:[A-Za-zÀ-ÿ]{3,}\.?,?\s+)?(\d{1,2})\s+([A-Za-zÀ-ÿ]{3,})\.?(?:\s+(\d{4}))?$/);
+      const month = match ? monthNumber(match[2]) : null;
+      if (month) {
+        return [
+          match[3] || String(yearForMonth(month)),
+          String(month).padStart(2, "0"),
+          match[1].padStart(2, "0"),
+        ].join("-");
+      }
+      return "";
+    }
+
+    function displayedPageDate() {
+      for (const input of Array.from(doc.querySelectorAll("input"))) {
+        const iso = isoFromAnyDate(input.value || input.getAttribute("value") || "");
+        if (iso) return iso;
+      }
+      return "";
+    }
 
     function fallbackDate() {
-      return sourceDateMatch?.[1] || dates[0]?.iso || localIsoDate();
+      return pageDate || dates[0]?.iso || localIsoDate();
     }
 
     function toMinutes(t) {
@@ -252,7 +287,7 @@
     }
 
     function dateForIndex(index) {
-      if (sourceDateMatch) return sourceDateMatch[1];
+      if (pageDate) return pageDate;
       let result = fallbackDate();
       for (const item of dates) {
         if (item.index <= index) result = item.iso;
@@ -290,7 +325,7 @@
       ].join("-");
     }
 
-    if (!isCalendarUrl) {
+    if (!isCalendarUrl && dayRowsAllowed) {
       for (const match of bodyText.matchAll(timeRangePattern)) {
         const contextBefore = bodyText.slice(Math.max(0, (match.index || 0) - 60), match.index || 0);
         if (/pausa|pause|break|riposo/i.test(contextBefore)) continue;
@@ -318,7 +353,7 @@
     }
 
     const isCalendar = isCalendarUrl || /CALENDARIO/i.test(bodyText);
-    const driverStatusMatch = isCalendar
+    const driverStatusMatch = isCalendar || !dayRowsAllowed
       ? null
       : bodyText.match(/\b(Presente no route|Libero)\s*\(([^)]+)\)\s*(?:(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})|n\.d\.\s*-\s*n\.d\.)?/i);
     if (driverStatusMatch) {
@@ -399,7 +434,7 @@
     const startMatches = Array.from(bodyText.matchAll(/(?:Inizio|Start)[:\s]+(\d{1,2}:\d{2})/gi));
     const endMatches = Array.from(bodyText.matchAll(/(?:Fine|End)[:\s]+(\d{1,2}:\d{2})/gi));
     let endCursor = 0;
-    for (let i = 0; i < startMatches.length && !isCalendarUrl; i++) {
+    for (let i = 0; i < startMatches.length && !isCalendarUrl && dayRowsAllowed; i++) {
       const startIndex = startMatches[i].index || 0;
       while (endCursor < endMatches.length && (endMatches[endCursor].index || 0) < startIndex) {
         endCursor += 1;
@@ -435,7 +470,7 @@
     }
 
     for (const text of textNodes) {
-      if (rows.length >= 40) break;
+      if (rows.length >= 40 || !dayRowsAllowed) break;
 
       const kwMatch = text.match(keywordPattern);
       if (kwMatch) {
@@ -501,13 +536,6 @@
     }
   }
 
-  function isoDateOffset(offsetDays) {
-    const date = new Date();
-    date.setHours(12, 0, 0, 0);
-    date.setDate(date.getDate() + offsetDays);
-    return localIsoDate(date);
-  }
-
   function currentMonthDateRange() {
     const start = new Date();
     start.setHours(12, 0, 0, 0);
@@ -521,18 +549,17 @@
     };
   }
 
-  function dateUrlsFor(isoDate) {
-    return [
-      absoluteDriverUrl("/driver?date=" + encodeURIComponent(isoDate)),
-      absoluteDriverUrl("/driver/calendar?date=" + encodeURIComponent(isoDate)),
-    ];
-  }
-
-  function routeLinksFromDocument(doc) {
-    return Array.from(doc.querySelectorAll('a[href*="/driver/route/"]'))
-      .map((node) => node.getAttribute("href") || "")
-      .filter(Boolean)
-      .map((href) => absoluteDriverUrl(href));
+  function currentWeekRange() {
+    // Settimana del portale: lunedi' -> domenica.
+    const start = new Date();
+    start.setHours(12, 0, 0, 0);
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    return {
+      from: localIsoDate(start),
+      to: localIsoDate(end),
+    };
   }
 
   function decimalHours(start, end) {
@@ -578,6 +605,185 @@
     return { start: "", end: "" };
   }
 
+  // L'API calendario non dice la sigla della giornata (S, W, FA, M, RC...)
+  // ma solo type_id/activity_id numerici. La sigla compare invece nel
+  // calendario renderizzato della settimana corrente: incrociando le due
+  // fonti sugli stessi giorni si impara cosa significa ogni id, e la mappa
+  // resta salvata nel browser per ricostruire anche i mesi passati.
+  const dayTypeStoreKey = "geoinroad_pro_day_types_v1";
+
+  function loadDayTypeMap() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(dayTypeStoreKey) || "{}");
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function saveDayTypeMap(map) {
+    try {
+      localStorage.setItem(dayTypeStoreKey, JSON.stringify(map));
+    } catch (_) {}
+  }
+
+
+  function learnDayTypes(map, payloads, itemsByDay) {
+    let learned = 0;
+    for (const payload of payloads) {
+      for (const row of payload.rows || []) {
+        if (!/^dom\/calendar/.test(String(row.source || ""))) continue;
+        const marker = String(row.work_marker || "").toUpperCase();
+        const item = itemsByDay.get(String(row.date || ""));
+        // Solo giorni gia' trascorsi: nel futuro il calendario mostra la
+        // presenza pianificata, non il tipo definitivo della giornata.
+        if (!marker || !item || String(row.date) > localIsoDate()) continue;
+        if (item.activity_id === undefined || item.activity_id === null) continue;
+        const key = "a:" + item.activity_id;
+        const entry = map[key] || (map[key] = {});
+        const slot = entry[marker] || (entry[marker] = { status: "", days: [] });
+        if (row.status) slot.status = String(row.status);
+        if (!slot.days.includes(row.date)) {
+          slot.days.push(row.date);
+          if (slot.days.length > 12) slot.days.shift();
+          learned += 1;
+        }
+      }
+    }
+    return learned;
+  }
+
+  function resolveDayType(map, item, storeTypes) {
+    // Solo activity_id: lo stesso type_id copre attivita' diverse (es.
+    // ferie e malattia), dedurre la sigla dal tipo sbaglierebbe giorni.
+    const key = "a:" + (item ? item.activity_id : "");
+    const entry = map[key];
+    const markers = entry ? Object.keys(entry) : [];
+    if (markers.length) {
+      markers.sort((a, b) => entry[b].days.length - entry[a].days.length);
+      return { marker: markers[0], status: entry[markers[0]].status || "", via: key };
+    }
+    const fromStore = storeTypes && item ? storeTypes["a:" + item.activity_id] : null;
+    if (fromStore) return { marker: fromStore.marker, status: fromStore.status, via: "store" };
+    return null;
+  }
+
+  function summarizeDayTypes(map) {
+    return Object.keys(map)
+      .sort()
+      .slice(0, 40)
+      .map((key) => key + "=" + Object.keys(map[key])
+        .map((marker) => marker + "(" + map[key][marker].days.length + ")")
+        .join("/"));
+  }
+
+  function harvestStoreDayTypes() {
+    // Il portale potrebbe tenere nello store Vuex l'elenco delle attivita'
+    // con la loro sigla: se c'e', copre gli id non ancora imparati.
+    const result = { types: {}, candidates: [] };
+    let state = null;
+    try {
+      state = window.$nuxt && window.$nuxt.$store && window.$nuxt.$store.state;
+    } catch (_) {}
+    if (!state) return result;
+    const codeKeys = ["code", "abbreviation", "acronym", "short_name", "shortName", "sigla", "symbol", "badge", "short", "initials"];
+    const nameKeys = ["name", "description", "label", "title", "text"];
+    const seen = new Set();
+    function visit(value, path, depth) {
+      if (!value || typeof value !== "object" || depth > 4 || seen.has(value)) return;
+      seen.add(value);
+      if (Array.isArray(value)) {
+        const sample = value.slice(0, 80).filter((entry) => entry && typeof entry === "object" && entry.id !== undefined);
+        if (sample.length < 2) return;
+        const codeKey = codeKeys.find((key) =>
+          sample.filter((entry) => typeof entry[key] === "string" && /^[A-Z]{1,3}$/.test(entry[key].trim())).length >= sample.length * 0.8
+        );
+        if (!codeKey) return;
+        const nameKey = nameKeys.find((key) => typeof sample[0][key] === "string");
+        result.candidates.push({
+          path,
+          size: value.length,
+          sample: sample.slice(0, 12).map((entry) =>
+            entry.id + "=" + entry[codeKey] + (nameKey ? " " + String(entry[nameKey]).slice(0, 24) : "")
+          ),
+        });
+        if (/activit/i.test(path)) {
+          for (const entry of sample) {
+            if (typeof entry[codeKey] !== "string") continue;
+            result.types["a:" + entry.id] = {
+              marker: entry[codeKey].trim().toUpperCase(),
+              status: nameKey ? String(entry[nameKey] || "") : "",
+            };
+          }
+        }
+        return;
+      }
+      for (const key of Object.keys(value).slice(0, 60)) {
+        try {
+          visit(value[key], path ? path + "." + key : key, depth + 1);
+        } catch (_) {}
+      }
+    }
+    visit(state, "", 0);
+    result.candidates = result.candidates.slice(0, 6);
+    return result;
+  }
+
+  function apiCalendarRows(items, typeMap, storeTypes) {
+    const rows = [];
+    let timeRows = 0;
+    const today = localIsoDate();
+    for (const item of items) {
+      const day = String(item.day || item.date || "");
+      if (!day) continue;
+      const dayType = resolveDayType(typeMap, item, storeTypes);
+      const ids = {
+        type_id: item.type_id ?? "",
+        activity_id: item.activity_id ?? "",
+        day_type_via: dayType ? dayType.via : "",
+      };
+      const calendarTime = timeRangeFromApiObject(item);
+      if (item.present && calendarTime.start && calendarTime.end) {
+        timeRows += 1;
+        rows.push({
+          label: "Turno " + calendarTime.start + "-" + calendarTime.end,
+          value: decimalHours(calendarTime.start, calendarTime.end),
+          raw: "driver_calendar " + day,
+          date: day,
+          start_time: calendarTime.start,
+          end_time: calendarTime.end,
+          status: dayType ? dayType.status : "",
+          work_marker: dayType ? dayType.marker : "",
+          ...ids,
+          source: "geoinroad_api/employees/driver_calendar",
+        });
+        continue;
+      }
+      // Oggi e il futuro non vengono marcati dall'assenza API: il
+      // calendario puo' non essere ancora aggiornato per la giornata
+      // in corso e segnerebbe "riposo" un giorno lavorato.
+      if (!item.present && day >= today) continue;
+      const absence = String(item.absence_type || item.absence || item.reason || "").trim();
+      const marker = dayType ? dayType.marker : (item.present ? "W" : "R");
+      const status = (dayType && dayType.status) || absence || (item.present ? "Presente no route" : "Libero");
+      // Presenze senza orario, abortive e ferie: 8 ore pagate di default.
+      const paid = /^(S|W|A|F|FA)$/.test(marker);
+      rows.push({
+        label: status,
+        value: paid ? "8.00" : "0",
+        raw: "driver_calendar " + day,
+        date: day,
+        status: status,
+        work_marker: marker,
+        ...ids,
+        source: paid
+          ? "geoinroad_api/employees/driver_calendar-default"
+          : "geoinroad_api/employees/driver_calendar",
+      });
+    }
+    return { rows, timeRows };
+  }
+
   async function collectApiStats(range) {
     const debug = {
       api_available: false,
@@ -587,18 +793,10 @@
       route_days: 0,
       errors: [],
     };
-    const rows = [];
+    const api = { debug, items: [], weekItems: [], routeRows: [], calendarOk: false };
     const nuxt = window.$nuxt;
     const axios = nuxt && nuxt.$axios;
-    if (!axios || typeof axios.$get !== "function") {
-      return {
-        title: document.title,
-        url: window.location.href,
-        captured_at: new Date().toISOString(),
-        debug,
-        rows,
-      };
-    }
+    if (!axios || typeof axios.$get !== "function") return api;
     debug.api_available = true;
 
     let employee = {};
@@ -611,95 +809,73 @@
     debug.employee_id = employeeId || "";
     if (!employeeId) {
       debug.errors.push("missing employee id");
-      return {
-        title: document.title,
-        url: window.location.href,
-        captured_at: new Date().toISOString(),
-        debug,
-        rows,
-      };
+      return api;
     }
 
-    const { from, to } = range || currentMonthDateRange();
-    const daySet = new Set();
-    try {
-      const calendarPayload = await axios.$get(
+    async function fetchCalendar(fromDay, toDay) {
+      const payload = await axios.$get(
         "/geoinroad_api/employees/driver_calendar?from=" +
-          encodeURIComponent(from) +
+          encodeURIComponent(fromDay) +
           "&to=" +
-          encodeURIComponent(to) +
+          encodeURIComponent(toDay) +
           "&employee=" +
           encodeURIComponent(employeeId)
       );
-      const calendars = calendarPayload.employee_calendars || calendarPayload.calendars || [];
-      debug.calendar_days = calendars.length;
-      debug.calendar_samples = calendars.slice(0, 3).map((item) => {
+      return payload.employee_calendars || payload.calendars || [];
+    }
+
+    const { from, to } = range || currentMonthDateRange();
+    try {
+      api.items = await fetchCalendar(from, to);
+      api.calendarOk = true;
+      debug.calendar_days = api.items.length;
+      debug.calendar_samples = api.items.slice(0, 3).map((item) => {
         try { return JSON.stringify(item).slice(0, 400); } catch (_) { return "unserializable"; }
       });
-      for (const item of calendars) {
-        const day = item.day || item.date;
-        if (!day) continue;
-        daySet.add(day);
-        const calendarTime = timeRangeFromApiObject(item);
-        if (item.present && calendarTime.start && calendarTime.end) {
-          debug.calendar_time_rows += 1;
-          rows.push({
-            label: "Turno " + calendarTime.start + "-" + calendarTime.end,
-            value: decimalHours(calendarTime.start, calendarTime.end),
-            raw: "driver_calendar " + day,
-            date: day,
-            start_time: calendarTime.start,
-            end_time: calendarTime.end,
-            source: "geoinroad_api/employees/driver_calendar",
-          });
-        } else if (item.present) {
-          rows.push({
-            label: "Presente no route",
-            value: "8.00",
-            raw: "driver_calendar " + day,
-            date: day,
-            status: "Presente no route",
-            work_marker: "W",
-            source: "geoinroad_api/employees/driver_calendar-default",
-          });
-        } else {
-          // Oggi e il futuro non vengono marcati dall'assenza API: il
-          // calendario puo' non essere ancora aggiornato per la giornata
-          // in corso e segnerebbe "riposo" un giorno lavorato.
-          if (String(day) >= localIsoDate()) continue;
-          const absence = String(
-            item.absence_type || item.absence || item.reason || ""
-          ).trim();
-          rows.push({
-            label: absence || "Libero",
-            value: "0",
-            raw: "driver_calendar " + day,
-            date: day,
-            status: absence || "Libero",
-            work_marker: "R",
-            source: "geoinroad_api/employees/driver_calendar",
-          });
-        }
-      }
     } catch (error) {
       debug.errors.push("calendar api: " + String(error).slice(0, 160));
     }
 
-    const routeDays = Array.from(daySet).sort();
+    // La settimana corrente serve sempre: e' quella che il calendario
+    // renderizzato mostra con le sigle, da cui si impara la mappa tipi.
+    const week = currentWeekRange();
+    if (week.from < from || week.to > to) {
+      try {
+        api.weekItems = await fetchCalendar(week.from, week.to);
+      } catch (error) {
+        debug.errors.push("week calendar api: " + String(error).slice(0, 120));
+      }
+    }
+
+    const typeCounts = new Map();
+    for (const item of [...api.items, ...api.weekItems]) {
+      const key = "t" + item.type_id + "/a" + item.activity_id + (item.present ? "/P" : "/A");
+      const current = typeCounts.get(key) || { count: 0, day: "" };
+      current.count += 1;
+      current.day = current.day || String(item.day || item.date || "");
+      typeCounts.set(key, current);
+    }
+    debug.type_stats = Array.from(typeCounts.entries())
+      .slice(0, 30)
+      .map(([key, value]) => key + " x" + value.count + " (" + value.day + ")");
+
+    const routeDays = Array.from(new Set(
+      api.items.map((item) => String(item.day || item.date || "")).filter(Boolean)
+    )).sort();
     for (let cursor = 0; cursor < routeDays.length; cursor += 6) {
       const batch = routeDays.slice(cursor, cursor + 6);
       const batchResults = await Promise.all(batch.map(async (day) => {
-      try {
-        const routePayload = await axios.$get(
-          "/geoinroad_api/planner/route?day=" +
-            encodeURIComponent(day) +
-            "&employee=" +
-            encodeURIComponent(employeeId)
-        );
-        return { day, routes: routePayload.routes || [], error: "" };
-      } catch (error) {
-        return { day, routes: [], error: String(error).slice(0, 120) };
-      }
+        try {
+          const routePayload = await axios.$get(
+            "/geoinroad_api/planner/route?day=" +
+              encodeURIComponent(day) +
+              "&employee=" +
+              encodeURIComponent(employeeId)
+          );
+          return { day, routes: routePayload.routes || [], error: "" };
+        } catch (error) {
+          return { day, routes: [], error: String(error).slice(0, 120) };
+        }
       }));
       for (const item of batchResults) {
         const day = item.day;
@@ -711,12 +887,12 @@
         if (routes.length) debug.route_days += 1;
         for (const route of routes) {
           const driver = (route.drivers || []).find(
-            (item) => String(item.driver_id || "") === String(employeeId)
+            (entry) => String(entry.driver_id || "") === String(employeeId)
           );
           const start = driver?.start || route.start || "";
           const end = driver?.end || route.end || "";
           if (!start || !end) continue;
-          rows.push({
+          api.routeRows.push({
             label: "Turno " + start + "-" + end,
             value: decimalHours(start, end),
             raw: "planner route " + (route.code || route.id || day),
@@ -732,43 +908,7 @@
         }
       }
     }
-
-    return {
-      title: document.title,
-      url: window.location.href,
-      captured_at: new Date().toISOString(),
-      debug,
-      rows,
-    };
-  }
-
-  async function fetchStatsDocument(url) {
-    const result = {
-      url,
-      ok: false,
-      status: 0,
-      rows: 0,
-      time_ranges: 0,
-      start_count: 0,
-      end_count: 0,
-      error: "",
-    };
-    try {
-      const response = await fetch(url, { credentials: "include" });
-      result.status = response.status;
-      const html = await response.text();
-      result.ok = response.ok;
-      const doc = new DOMParser().parseFromString(html, "text/html");
-      const payload = extractCandidateStats(doc, url, doc.title || "Geoin ROAD");
-      result.rows = payload.rows.length;
-      result.time_ranges = payload.debug.time_range_count || 0;
-      result.start_count = payload.debug.start_count || 0;
-      result.end_count = payload.debug.end_count || 0;
-      return { result, payload, doc };
-    } catch (error) {
-      result.error = String(error).slice(0, 180);
-      return { result, payload: null, doc: null };
-    }
+    return api;
   }
 
   function renderedDocLooksReady(doc) {
@@ -780,7 +920,7 @@
     }
   }
 
-  async function loadRenderedStatsDocument(url) {
+  function openRenderedFrame(url) {
     const result = {
       url,
       ok: false,
@@ -799,12 +939,14 @@
       let pollId = 0;
       let timeoutId = 0;
       const startedAt = Date.now();
+      // Dimensioni da telefono (fuori schermo): a 1px la SPA puo' non
+      // disegnare i comandi di navigazione del calendario.
       iframe.style.cssText = [
         "position:fixed",
         "left:-10000px",
         "top:-10000px",
-        "width:1px",
-        "height:1px",
+        "width:412px",
+        "height:900px",
         "opacity:0",
         "pointer-events:none",
       ].join(";");
@@ -818,18 +960,12 @@
         try {
           const doc = iframe.contentDocument || iframe.contentWindow?.document;
           if (!doc) throw new Error("iframe document unavailable");
-          const payload = extractCandidateStats(doc, url, doc.title || "Geoin ROAD");
           result.ok = true;
-          result.rows = payload.rows.length;
-          result.time_ranges = payload.debug.time_range_count || 0;
-          result.start_count = payload.debug.start_count || 0;
-          result.end_count = payload.debug.end_count || 0;
-          iframe.remove();
-          resolve({ result, payload, doc });
+          resolve({ result, iframe, doc });
         } catch (error) {
           result.error = String(error).slice(0, 180);
           try { iframe.remove(); } catch (_) {}
-          resolve({ result, payload: null, doc: null });
+          resolve({ result, iframe: null, doc: null });
         }
       }
 
@@ -858,27 +994,165 @@
     });
   }
 
-  function isWorkedMarker(marker) {
-    const normalized = String(marker || "").toUpperCase();
-    return normalized === "W" || normalized === "S";
+  function describePayload(result, payload) {
+    result.rows = payload.rows.length;
+    result.time_ranges = payload.debug.time_range_count || 0;
+    result.start_count = payload.debug.start_count || 0;
+    result.end_count = payload.debug.end_count || 0;
   }
 
-  function shouldExpandRow(row) {
-    // Le pagine diario per-giorno servono solo per i giorni effettivamente
-    // in servizio (S/W): abortive e ferie sono pagati 8 ore ma senza turno.
-    const marker = String(row.work_marker || "").toUpperCase();
-    if (marker) return isWorkedMarker(marker);
-    return (parseFloat(row.value || "0") || 0) > 0;
-  }
-
-  function addDateUrls(queue, queued, isoDate) {
-    if (!isoDate) return;
-    for (const url of dateUrlsFor(isoDate)) {
-      if (!queued.has(url)) {
-        queued.add(url);
-        queue.push(url);
-      }
+  async function loadRenderedStatsDocument(url) {
+    const frame = await openRenderedFrame(url);
+    if (!frame.doc) return { result: frame.result, payload: null };
+    try {
+      const payload = extractCandidateStats(frame.doc, url, frame.doc.title || "Geoin ROAD");
+      describePayload(frame.result, payload);
+      return { result: frame.result, payload };
+    } catch (error) {
+      frame.result.error = String(error).slice(0, 180);
+      return { result: frame.result, payload: null };
+    } finally {
+      try { frame.iframe.remove(); } catch (_) {}
     }
+  }
+
+  const calendarHeaderPattern = /\b\d{1,2}\s+[A-Za-zÀ-ÿ]{3}\s*~\s*\d{1,2}\s+[A-Za-zÀ-ÿ]{3}/;
+
+  function calendarHeaderText(doc) {
+    const match = ((doc.body && doc.body.innerText) || "").match(calendarHeaderPattern);
+    return match ? match[0] : "";
+  }
+
+  function calendarDates(payload) {
+    return (payload.rows || [])
+      .filter((row) => /^dom\/calendar/.test(String(row.source || "")) && row.date)
+      .map((row) => String(row.date))
+      .sort();
+  }
+
+  function findPreviousWeekControl(doc) {
+    // Il calendario mostra una settimana alla volta e ignora ?date=: per i
+    // giorni passati bisogna premere la freccia "indietro" accanto
+    // all'intestazione "19 ott ~ 25 ott".
+    let headerNode = null;
+    for (const node of Array.from(doc.querySelectorAll("body *"))) {
+      const text = node.textContent || "";
+      if (!calendarHeaderPattern.test(text)) continue;
+      // A parita' di testo vince il nodo piu' interno (l'ordine e' quello
+      // del documento, gli antenati arrivano prima).
+      if (!headerNode || text.length <= (headerNode.textContent || "").length) headerNode = node;
+    }
+    if (!headerNode) return null;
+    const previousHint = /prev|indietro|precedent|chevron[-_]left|arrow[-_]left|arrow[-_]back|‹|«/i;
+    const nextHint = /next|avanti|successiv|chevron[-_]right|arrow[-_]right|arrow[-_]forward|›|»/i;
+    const describe = (node) => [
+      node.getAttribute("aria-label"),
+      node.getAttribute("title"),
+      node.getAttribute("class"),
+      node.textContent,
+    ].join(" ");
+    let scope = headerNode.parentElement;
+    for (let level = 0; scope && level < 4; level++, scope = scope.parentElement) {
+      const candidates = Array.from(
+        scope.querySelectorAll('button, [role="button"], a, svg, i, [class*="icon"], [class*="btn"]')
+      ).filter((node) => !node.contains(headerNode) && !headerNode.contains(node));
+      if (!candidates.length) continue;
+      const hinted = candidates.find((node) => previousHint.test(describe(node)) && !nextHint.test(describe(node)));
+      // 4 = DOCUMENT_POSITION_FOLLOWING: l'intestazione viene dopo il nodo.
+      const before = candidates.filter((node) => node.compareDocumentPosition(headerNode) & 4);
+      const pick = hinted || before[before.length - 1];
+      if (pick) return pick.closest('button, [role="button"], a') || pick;
+    }
+    return null;
+  }
+
+  function clickElement(doc, element) {
+    if (typeof element.click === "function") {
+      element.click();
+      return;
+    }
+    const view = doc.defaultView || window;
+    element.dispatchEvent(new view.MouseEvent("click", { bubbles: true, cancelable: true }));
+  }
+
+  function waitForEarlierCalendarWeek(doc, url, previousDates, timeoutMs) {
+    // La settimana precedente e' pronta quando le righe renderizzate
+    // cadono tutte prima di quelle gia' lette (non basta il cambio di
+    // intestazione: le righe possono arrivare un attimo dopo).
+    const startedAt = Date.now();
+    const earliest = previousDates[0] || "9999-12-31";
+    return new Promise((resolve) => {
+      const timerId = setInterval(() => {
+        try {
+          const payload = extractCandidateStats(doc, url, doc.title || "Geoin ROAD");
+          const dates = calendarDates(payload);
+          if (dates.length && dates[dates.length - 1] < earliest) {
+            clearInterval(timerId);
+            setTimeout(() => {
+              const settled = extractCandidateStats(doc, url, doc.title || "Geoin ROAD");
+              const settledDates = calendarDates(settled);
+              resolve(settledDates.length && settledDates[settledDates.length - 1] < earliest ? settled : payload);
+            }, 500);
+            return;
+          }
+        } catch (_) {}
+        if (Date.now() - startedAt > timeoutMs) {
+          clearInterval(timerId);
+          resolve(null);
+        }
+      }, 400);
+    });
+  }
+
+  async function renderCalendarWeeks(range, fetches) {
+    const nav = { weeks_wanted: 0, weeks_read: 0, headers: [], stop: "" };
+    const payloads = [];
+    const url = absoluteDriverUrl("/driver/calendar");
+    const frame = await openRenderedFrame(url);
+    fetches.push(frame.result);
+    if (!frame.doc) {
+      nav.stop = "no_document";
+      return { payloads, nav };
+    }
+    try {
+      const doc = frame.doc;
+      const first = extractCandidateStats(doc, url, doc.title || "Geoin ROAD");
+      describePayload(frame.result, first);
+      payloads.push(first);
+      nav.headers.push(calendarHeaderText(doc));
+      let previousDates = calendarDates(first);
+      const weekStart = new Date(currentWeekRange().from + "T12:00:00");
+      const fromDate = new Date(range.from + "T12:00:00");
+      nav.weeks_wanted = Math.max(0, Math.min(16, Math.ceil((weekStart - fromDate) / (7 * 86400000))));
+      for (let step = 0; step < nav.weeks_wanted; step++) {
+        if (!previousDates.length) {
+          nav.stop = "no_calendar_rows";
+          break;
+        }
+        const control = findPreviousWeekControl(doc);
+        if (!control) {
+          nav.stop = "no_prev_control";
+          break;
+        }
+        clickElement(doc, control);
+        const weekUrl = url + "#settimana-" + (step + 1);
+        const payload = await waitForEarlierCalendarWeek(doc, weekUrl, previousDates, 7000);
+        if (!payload) {
+          nav.stop = "week_unchanged";
+          break;
+        }
+        payloads.push(payload);
+        nav.weeks_read += 1;
+        nav.headers.push(calendarHeaderText(doc));
+        previousDates = calendarDates(payload);
+      }
+    } catch (error) {
+      nav.stop = "error: " + String(error).slice(0, 120);
+    } finally {
+      try { frame.iframe.remove(); } catch (_) {}
+    }
+    nav.headers = nav.headers.slice(0, 20);
+    return { payloads, nav };
   }
 
   function mergeStatsPayloads(payloads, fetches) {
@@ -902,10 +1176,15 @@
       for (const row of payload.rows || []) {
         const value = parseFloat(row.value || "0") || 0;
         if (value > 0 && row.date) {
-          if (rowPriority(row) !== bestPriorityByDate.get(row.date)) continue;
-          const shiftKey = row.start_time && row.end_time
-            ? row.date + "|" + row.start_time + "|" + row.end_time
-            : row.date + "|" + String(row.label || "") + "|" + String(row.value || "");
+          const priority = rowPriority(row);
+          if (priority !== bestPriorityByDate.get(row.date)) continue;
+          // Le 8 ore di default sono una per giorno, qualunque fonte le
+          // proponga (API e calendario hanno etichette diverse).
+          const shiftKey = priority === 5
+            ? row.date + "|default"
+            : row.start_time && row.end_time
+              ? row.date + "|" + row.start_time + "|" + row.end_time
+              : row.date + "|" + String(row.label || "") + "|" + String(row.value || "");
           if (shiftKeys.has(shiftKey)) continue;
           shiftKeys.add(shiftKey);
         } else if (value <= 0 && row.date && bestPriorityByDate.has(row.date)) {
@@ -967,141 +1246,95 @@
     const range = hasCustomRange
       ? { from: String(options.from), to: String(options.to) }
       : currentMonthDateRange();
+    const { from, to } = range;
     const payloads = [extractCandidateStats()];
     const fetches = [];
-    const apiPayload = await collectApiStats(range);
-    if (apiPayload.rows.length || apiPayload.debug.api_available) {
-      payloads.push(apiPayload);
-    }
-    const queue = [];
-    const queued = new Set();
-    const calendarUrl = absoluteDriverUrl("/driver/calendar");
-    queued.add(calendarUrl);
-    queue.push(calendarUrl);
+    const api = await collectApiStats(range);
 
-    const { from, to } = range;
-    const startDate = new Date(from + "T12:00:00");
-    const endDate = new Date(to + "T12:00:00");
-    for (let date = startDate; date <= endDate; date.setDate(date.getDate() + 1)) {
-      addDateUrls(queue, queued, localIsoDate(date));
+    // 1. Sigle giornata dal calendario renderizzato, settimana per
+    //    settimana all'indietro fino all'inizio del periodo.
+    const weeks = await renderCalendarWeeks(range, fetches);
+    // Fuori dal periodo le settimane servono solo a imparare i tipi: le
+    // loro 8 ore di default sovrascriverebbero le ore reali gia' salvate.
+    for (const payload of weeks.payloads) {
+      payloads.push({
+        ...payload,
+        rows: (payload.rows || []).filter((row) => row.date >= from && row.date <= to),
+      });
     }
-    for (const row of payloads[0].rows || []) {
-      if (shouldExpandRow(row)) {
-        addDateUrls(queue, queued, row.date);
+
+    // 2. Mappa type/activity id -> sigla, arricchita con queste settimane.
+    const typeMap = loadDayTypeMap();
+    const itemsByDay = new Map();
+    for (const item of [...api.weekItems, ...api.items]) {
+      const day = item.day || item.date;
+      if (day) itemsByDay.set(String(day), item);
+    }
+    const learned = learnDayTypes(typeMap, weeks.payloads, itemsByDay);
+    if (learned) saveDayTypeMap(typeMap);
+    const storeTypes = harvestStoreDayTypes();
+
+    // 3. Righe API tipizzate: ferie, malattia, riposi... non piu' tutto
+    //    "Libero".
+    const calendar = apiCalendarRows(api.items, typeMap, storeTypes.types);
+    const debug = api.debug;
+    debug.calendar_time_rows = calendar.timeRows;
+    debug.day_types = summarizeDayTypes(typeMap);
+    debug.day_types_learned = learned;
+    debug.store_day_types = storeTypes.candidates;
+    debug.calendar_nav = weeks.nav;
+    if (debug.api_available) {
+      payloads.push({
+        title: document.title,
+        url: window.location.href,
+        captured_at: new Date().toISOString(),
+        debug,
+        rows: [...calendar.rows, ...api.routeRows],
+      });
+    }
+
+    // 4. Senza API (portale cambiato o sessione non pronta): ultima
+    //    risorsa, le pagine diario per-giorno, accettate solo se
+    //    mostrano davvero la data richiesta.
+    if (!api.calendarOk) {
+      const startDate = new Date(from + "T12:00:00");
+      const endDate = new Date(to + "T12:00:00");
+      const rangeDays = Math.round((endDate - startDate) / 86400000) + 1;
+      const renderedLimit = Math.min(2 * rangeDays, 62);
+      const today = localIsoDate();
+      const days = [];
+      for (let date = new Date(startDate); date <= endDate; date.setDate(date.getDate() + 1)) {
+        if (localIsoDate(date) <= today) days.push(localIsoDate(date));
       }
-    }
-
-    let cursor = 0;
-    while (cursor < queue.length && cursor < 90) {
-      const batch = queue.slice(cursor, cursor + 5);
-      cursor += batch.length;
-      const results = await Promise.all(batch.map((url) => fetchStatsDocument(url)));
-      for (const item of results) {
+      const renderBudgetMs = 120000;
+      const renderStartedAt = Date.now();
+      for (const day of days.reverse().slice(0, renderedLimit)) {
+        if (Date.now() - renderStartedAt > renderBudgetMs) break;
+        const item = await loadRenderedStatsDocument(
+          absoluteDriverUrl("/driver?date=" + encodeURIComponent(day))
+        );
         fetches.push(item.result);
-        if (item.payload) {
-          payloads.push(item.payload);
-          for (const row of item.payload.rows || []) {
-            if (shouldExpandRow(row)) {
-              addDateUrls(queue, queued, row.date);
-            }
-          }
-        }
-        if (item.doc) {
-          for (const url of routeLinksFromDocument(item.doc)) {
-            if (!queued.has(url)) {
-              queued.add(url);
-              queue.push(url);
-            }
-          }
-        }
+        if (item.payload) payloads.push(item.payload);
       }
     }
 
-    const renderedQueue = [];
-    const renderedQueued = new Set();
-    function addRenderedUrl(url) {
-      if (renderedQueued.has(url)) return;
-      renderedQueued.add(url);
-      renderedQueue.push(url);
-    }
-
-    // Le sigle delle giornate (S, W, A, M, F, GF, R...) vivono solo nelle
-    // pagine calendario renderizzate, una settimana per pagina: una
-    // renderizzata per settimana del periodo copre tutti i tipi giorno.
-    const weekAnchors = [];
-    for (let d = new Date(from + "T12:00:00"); d <= endDate; d.setDate(d.getDate() + 7)) {
-      weekAnchors.push(localIsoDate(d));
-    }
-    for (const anchor of weekAnchors) {
-      addRenderedUrl(absoluteDriverUrl("/driver/calendar?date=" + encodeURIComponent(anchor)));
-    }
-
-    let merged = mergeStatsPayloads(payloads, fetches);
-    const hasPositiveRows = merged.rows.some((row) => parseFloat(row.value || "0") > 0);
-    const renderedDates = new Set();
-    if (hasPositiveRows) {
-      for (const row of merged.rows || []) {
-        const value = parseFloat(row.value || "0") || 0;
-        if (value > 0 && row.date && rowPriority(row) <= 20) renderedDates.add(row.date);
-      }
-      for (const payload of payloads) {
-        for (const row of payload.rows || []) {
-          if (row.date && isWorkedMarker(row.work_marker)) renderedDates.add(row.date);
-        }
-      }
-      for (const day of Array.from(renderedDates).sort().reverse().slice(0, 10)) {
-        addDateUrls(renderedQueue, renderedQueued, day);
-      }
-    } else if (hasCustomRange) {
-      // Periodo passato senza dati: renderizza tutte le pagine del range.
-      for (let date = new Date(from + "T12:00:00"); date <= endDate; date.setDate(date.getDate() + 1)) {
-        for (const url of dateUrlsFor(localIsoDate(date))) {
-          addRenderedUrl(url);
-        }
-      }
-    } else {
-      addRenderedUrl(calendarUrl);
-      for (let offset = -8; offset <= 8; offset++) {
-        addRenderedUrl(absoluteDriverUrl("/driver?date=" + encodeURIComponent(isoDateOffset(offset))));
-      }
-    }
-
-    const rangeDays = Math.round((endDate - startDate) / 86400000) + 1;
-    const renderedLimit = weekAnchors.length + (hasPositiveRows
-      ? 20
-      : (hasCustomRange ? Math.min(2 * rangeDays, 62) : 28));
-    // Budget di tempo complessivo: le settimane di calendario sono in
-    // testa alla coda e passano sempre; le pagine per-giorno riempiono
-    // il tempo che resta.
-    const renderBudgetMs = 120000;
-    const renderStartedAt = Date.now();
-    for (let index = 0; index < renderedQueue.length && index < renderedLimit; index++) {
-      if (Date.now() - renderStartedAt > renderBudgetMs) break;
-      const item = await loadRenderedStatsDocument(renderedQueue[index]);
-      fetches.push(item.result);
-      if (item.payload) {
-        payloads.push(item.payload);
-        for (const row of item.payload.rows || []) {
-          if (shouldExpandRow(row)) {
-            for (const url of dateUrlsFor(row.date)) {
-              addRenderedUrl(url);
-            }
-          }
-        }
-      }
-      if (item.doc) {
-        for (const url of routeLinksFromDocument(item.doc)) {
-          addRenderedUrl(url);
-        }
-      }
-    }
-
-    return mergeStatsPayloads(payloads, fetches);
+    const merged = mergeStatsPayloads(payloads, fetches);
+    // Con il calendario API letto il periodo e' completo: il salvataggio
+    // puo' ripulire le ore vecchie (anche errate) dei giorni del periodo.
+    if (api.calendarOk) merged.sync_range = { from, to };
+    return merged;
   }
 
   window.GeoinroadApp = window.GeoinroadApp || {};
   window.GeoinroadApp.extractCandidateStats = extractCandidateStats;
   window.GeoinroadApp.mergeStatsPayloads = mergeStatsPayloads;
+  // Esposti per i test automatici dello scraper.
+  window.GeoinroadApp.internals = {
+    apiCalendarRows,
+    learnDayTypes,
+    resolveDayType,
+    findPreviousWeekControl,
+  };
   window.GeoinroadApp.collectStats = async function (options = {}) {
     try {
       const quickPayload = extractCandidateStats();
