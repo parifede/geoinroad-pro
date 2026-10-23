@@ -43,23 +43,37 @@ jobs:
 
       # flet build scarica da solo il Flutter SDK richiesto (3.41.x)
       # e il toolchain Android mancante grazie a --yes.
-      # Con il secret ANDROID_SIGNING_PASSWORD l'APK viene firmato con la
-      # chiave fissa in ci/upload-keystore.jks: cosi' Android accetta gli
-      # aggiornamenti sopra l'app installata invece di chiedere la
-      # disinstallazione (che cancella credenziali e dati).
+      # Con i secret ANDROID_KEYSTORE_BASE64 (la chiave, codificata in
+      # base64) e ANDROID_SIGNING_PASSWORD l'APK viene firmato sempre con la
+      # stessa chiave: cosi' Android accetta gli aggiornamenti sopra l'app
+      # installata invece di chiedere la disinstallazione (che cancella
+      # credenziali e dati). Il repository e' pubblico, quindi la chiave
+      # vive solo nei secret, mai nei file. Il percorso passato a flet
+      # deve essere assoluto: uno relativo viene risolto dentro
+      # build/flutter/android/app.
       - name: Build APK
         env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
         run: |
           SIGN_ARGS=""
-          if [ -n "$SIGNING_PASSWORD" ]; then
-            SIGN_ARGS="--android-signing-key-store ci/upload-keystore.jks \
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$SIGNING_PASSWORD" ]; then
+            KEYSTORE="$RUNNER_TEMP/upload-keystore.jks"
+            echo "$KEYSTORE_BASE64" | tr -d ' \r\n' | base64 -d > "$KEYSTORE"
+            if ! keytool -list -keystore "$KEYSTORE" -storepass "$SIGNING_PASSWORD" -alias upload > /dev/null; then
+              echo "::error::Chiave o password di firma non valide: ricontrolla i secret ANDROID_KEYSTORE_BASE64 e ANDROID_SIGNING_PASSWORD."
+              exit 1
+            fi
+            SIGN_ARGS="--android-signing-key-store $KEYSTORE \
               --android-signing-key-store-password $SIGNING_PASSWORD \
               --android-signing-key-password $SIGNING_PASSWORD \
               --android-signing-key-alias upload"
             echo "Firma con chiave fissa attiva."
+          elif [ -n "$KEYSTORE_BASE64" ] || [ -n "$SIGNING_PASSWORD" ]; then
+            echo "::error::Firma incompleta: servono entrambi i secret ANDROID_KEYSTORE_BASE64 e ANDROID_SIGNING_PASSWORD."
+            exit 1
           else
-            echo "ATTENZIONE: secret ANDROID_SIGNING_PASSWORD assente, firma debug casuale."
+            echo "ATTENZIONE: secret di firma assenti, firma debug casuale."
           fi
           flet build apk --yes --no-rich-output --skip-flutter-doctor $SIGN_ARGS
 
