@@ -1,5 +1,47 @@
 # Geoin ROAD Pro
 
+> **App non ufficiale, non affiliata a Geoin ROAD né all'azienda. Ognuno usa le proprie credenziali, e i dati restano solo sul proprio telefono.**
+
+## Per i colleghi: come installarla
+
+### 1. Scarica l'APK
+
+1. Dal telefono apri la pagina [Releases](https://github.com/parifede/geoinroad-pro/releases/latest).
+2. Nella versione più recente, sotto **Assets**, tocca il file che finisce con `.apk` (per esempio `geoinroad-pro-v1.4.0.apk`). Lascia stare le versioni segnate **Pre-release**: sono di prova.
+3. Aspetta la fine del download (circa 75 MB).
+
+### 2. Consenti l'installazione da origini sconosciute
+
+L'app non viene dal Play Store, quindi Android la blocca la prima volta.
+
+1. Apri il file scaricato, dalla notifica del download o dall'app **File** / **Download**.
+2. Se compare l'avviso sulle origini sconosciute, tocca **Impostazioni** e attiva **Consenti da questa fonte** per l'app con cui hai aperto il file (Chrome, File...).
+3. Torna indietro e tocca **Installa**.
+4. Se Play Protect avvisa che l'app non è riconosciuta, tocca **Altri dettagli** e poi **Installa comunque**.
+
+I nomi delle voci cambiano un po' da telefono a telefono.
+
+### 3. Primo accesso
+
+1. Apri **Geoinroad Pro** e inserisci utente e password del portale Geoin ROAD, le stesse che usi sul sito. Tocca **Salva ed Entra**.
+2. Se il telefono ha impronta o PIN, Android ti chiede di confermare: serve a proteggere le credenziali salvate. Da lì in poi te lo chiede a ogni apertura dell'app.
+3. Si apre il diario. Il menu rapido è il pulsante in basso a sinistra; da lì apri **Statistiche lavoro**.
+4. La prima volta le statistiche si riempiono da sole: prima il mese in corso, poi i mesi passati, uno alla volta. Ci vuole un po', e puoi usare l'app nel frattempo.
+5. Facoltativo: in **Statistiche** → **Mese** → **Imposta** puoi inserire paga oraria, ore settimanali da contratto, paga straordinaria e diaria per vedere una stima lorda del mese. Le cifre restano sul telefono. È una stima indicativa, non è la busta paga.
+
+### Aggiornare
+
+- Scarica il nuovo APK dalle Releases e installalo sopra quello vecchio: credenziali e dati restano.
+- **Se hai la 1.3.0 o una versione precedente** (anche una pre-release), Android rifiuta l'aggiornamento: quelle versioni erano firmate con un'altra chiave. Disinstalla la vecchia app una volta, installa la nuova e rifai l'accesso. Dalla V1.3.1 in poi gli aggiornamenti si installano sopra senza problemi.
+
+### Uscire
+
+Menu rapido → **Log out**: cancella dal telefono credenziali, statistiche e cifre della stima.
+
+La **segnalazione bug** parte solo se la invii tu su WhatsApp. Contiene dati tecnici (versione dell'app, pagina aperta, un breve estratto del testo della pagina, dove può comparire il tuo nome) e le ore e i tipi di giornata del periodo che stai guardando. Non contiene mai la password.
+
+---
+
 Un'app Android non ufficiale, costruita con Python e Flet, nata per rendere piu comodo l'uso quotidiano del portale Geoin ROAD da smartphone.
 
 ## Caso Studio
@@ -40,10 +82,12 @@ Per evitare conteggi sbagliati, l'app ignora i giorni futuri rispetto al giorno 
 - Login automatico con fallback locale.
 - Drawer flottante con ricarica, statistiche lavoro, segnala bug e logout.
 - Logout con cancellazione credenziali e dati locali dell'account.
-- Statistiche per giorno, settimana Geoin ROAD e mese corrente.
+- Statistiche per giorno, settimana Geoin ROAD e mese, con lo storico dei mesi passati scaricato una volta sola.
+- Stima lorda del mese con paga, straordinari e diaria inseriti dall'utente.
+- Credenziali nel vault protetto del telefono (impronta o PIN), mai in chiaro.
 - Conteggio ore in formato orario reale, non decimale.
 - Splash screen con logo animato.
-- Blocco del tasto back Android sulle viste principali.
+- Tasto back Android: indietro nel portale, dalle statistiche torna al diario.
 - Test automatici per scraping, dashboard, credenziali, logout e navigazione.
 
 ## Stack Tecnico
@@ -73,11 +117,13 @@ Esegui i test:
 ## Distribuzione
 
 L'APK viene costruito e pubblicato automaticamente da GitHub Actions a ogni
-tag `v*`. Per rilasciare una nuova versione:
+tag `v*`, con la `v` minuscola (un tag `V1.3.1` maiuscolo non avvia nulla).
+Prima di creare il tag, `APP_VERSION` in `app_config.py` e `version` in
+`pyproject.toml` devono avere la stessa versione. Per rilasciare:
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.4.0
+git push origin v1.4.0
 ```
 
 Dopo circa 20 minuti l'APK compare nella pagina
