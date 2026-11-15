@@ -4,6 +4,7 @@ import flet as ft
 
 from app_config import ROUTE_REPORT, BRAND_ACCENT, BRAND_DARK, BRAND_SURFACE
 from app_state import AppState
+from views.back import back_handler
 
 _ACCENT = BRAND_ACCENT
 _BG = BRAND_DARK
@@ -34,6 +35,8 @@ def build_report_view(
     return ft.View(
         route=ROUTE_REPORT,
         can_pop=False,
+        # Back: torna al diario.
+        on_confirm_pop=back_handler(on_back_to_diary),
         bgcolor=_SURFACE,
         padding=0,
         controls=[

@@ -822,6 +822,7 @@ def main(page: ft.Page):
         state.session_unlocked = False
         state.background_stats_started = False
         stop_history_sync()
+        state.web_history.reset()
         if state.username_field_ref.current is not None:
             state.username_field_ref.current.value = ""
         if state.password_field_ref.current is not None:
@@ -902,6 +903,7 @@ def main(page: ft.Page):
         state.session_unlocked = False
         state.background_stats_started = False
         stop_history_sync()
+        state.web_history.reset()
         await go_to(ROUTE_LOCK)
 
     async def open_vault() -> None:
@@ -971,6 +973,20 @@ def main(page: ft.Page):
             return
         await state.webview_ref.current.load_request(credential_store.login_url)
 
+    async def webview_back() -> None:
+        # Tasto back nel diario: pagina precedente del portale. Se non c'e'
+        # niente prima (o prima c'e' il login) non succede nulla.
+        webview = state.webview_ref.current
+        if webview is None or not state.web_history.can_go_back():
+            return
+        try:
+            if not await webview.can_go_back():
+                return
+            state.web_history.went_back()
+            await webview.go_back()
+        except Exception as exc:
+            set_web_status(f"Indietro non riuscito: {exc}")
+
     async def refresh_webview() -> None:
         if state.webview_ref.current is None:
             return
@@ -1004,6 +1020,7 @@ def main(page: ft.Page):
 
     def on_url_change(e: ft.ControlEvent) -> None:
         state.last_loaded_url = e.data or credential_store.login_url
+        state.web_history.visit(e.data)
         set_web_status(f"Pagina corrente: {state.last_loaded_url}")
         if state.session_unlocked and "/login" not in (state.last_loaded_url or ""):
             page.run_task(start_background_stats_sync)
@@ -1089,6 +1106,7 @@ def main(page: ft.Page):
             on_url_change=on_url_change,
             on_web_resource_error=on_web_error,
             on_console_message=on_console_message,
+            on_back=webview_back,
         )
 
     def build_views() -> None:

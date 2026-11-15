@@ -5,6 +5,7 @@ import flet_webview as fwv
 
 from app_config import ROUTE_WEBVIEW, BRAND_ACCENT, BRAND_DARK
 from app_state import AppState
+from views.back import back_handler
 
 _ACCENT = BRAND_ACCENT
 _BG = BRAND_DARK
@@ -29,6 +30,7 @@ def build_web_view(
     on_url_change: Callable[[ft.ControlEvent], None],
     on_web_resource_error: Callable[[ft.ControlEvent], None],
     on_console_message: Callable[[object], None],
+    on_back: Callable[[], Awaitable[None]] | None = None,
 ) -> ft.View:
     page.drawer = None
 
@@ -123,6 +125,8 @@ def build_web_view(
     return ft.View(
         route=ROUTE_WEBVIEW,
         can_pop=False,
+        # Back: pagina precedente del portale, se c'e'.
+        on_confirm_pop=back_handler(on_back),
         bgcolor=_BG,
         padding=0,
         controls=[outer_body],

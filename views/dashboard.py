@@ -5,6 +5,7 @@ import flet as ft
 
 from app_config import ROUTE_DASHBOARD, BRAND_ACCENT, BRAND_DARK, BRAND_SURFACE
 from app_state import AppState
+from views.back import back_handler
 from services.earnings import (
     DISCLAIMER,
     estimate_month,
@@ -42,6 +43,8 @@ def build_dashboard_view(
     return ft.View(
         route=ROUTE_DASHBOARD,
         can_pop=False,
+        # Back: torna al diario.
+        on_confirm_pop=back_handler(on_back_to_diary),
         bgcolor=_SURFACE,
         padding=0,
         controls=[

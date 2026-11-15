@@ -10,6 +10,7 @@ from app_config import (
     VAULT_SHARED_PREFERENCES_NAME,
 )
 from services.timelog_repository import TimelogRepository
+from services.web_history import WebHistory
 
 
 @dataclass
@@ -73,6 +74,7 @@ class AppState:
     )
     storage_paths: ft.StoragePaths = field(default_factory=lambda: ft.StoragePaths())
     timelog_repository: TimelogRepository = field(default_factory=TimelogRepository)
+    web_history: WebHistory = field(default_factory=WebHistory)
     session_unlocked: bool = False
     credentials_available: bool = False
     cached_username: str = ""
