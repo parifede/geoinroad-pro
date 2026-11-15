@@ -102,7 +102,13 @@ class AppState:
     dashboard_period: str = "week"
     dashboard_anchor: str = ""
     dashboard_status: str = ""
+    # Solo periodi in corso: i mesi passati li porta lo storico, ricordato
+    # in SQLite (tabella history_months).
     synced_periods: set = field(default_factory=set)
+    history_running: bool = False
+    history_status: str = ""
+    # mese "AAAA-MM" -> (account, future) in attesa del payload dello script.
+    history_waiters: dict = field(default_factory=dict)
     database_path: str = ""
     javascript_mode_class = fwv.JavaScriptMode
 

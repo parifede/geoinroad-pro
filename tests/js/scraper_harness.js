@@ -108,4 +108,50 @@ const merged = app.mergeStatsPayloads(
 );
 results.default_rows_per_day = merged.rows.filter((row) => row.date === "2026-10-20").length;
 
-process.stdout.write(JSON.stringify(results));
+// Storico: un mese passato solo dalle API, senza calendario renderizzato
+// (nel finto browser non si possono aprire iframe: se lo script ci
+// provasse, il mese tornerebbe senza sync_range).
+const emitted = [];
+context.console.log = (line) => emitted.push(String(line));
+const requested = [];
+storage.set("geoinroad_employee", JSON.stringify({ id: 42 }));
+window.$nuxt = {
+  $axios: {
+    async $get(url) {
+      requested.push(url);
+      if (url.includes("driver_calendar")) {
+        return {
+          employee_calendars: [
+            { day: "2026-09-01", present: true, type_id: 1, activity_id: 1, start_time: "06:00", end_time: "14:30" },
+            { day: "2026-09-02", present: false, type_id: 3, activity_id: 9 },
+          ],
+        };
+      }
+      return { routes: [] };
+    },
+  },
+};
+
+(async () => {
+  await app.collectStats({
+    background: true,
+    history: true,
+    from: "2026-09-01",
+    to: "2026-09-30",
+    month: "2026-09",
+  });
+  const stats = emitted
+    .filter((line) => line.startsWith("GEOINROAD_APP::STATS::"))
+    .map((line) => JSON.parse(line.slice("GEOINROAD_APP::STATS::".length)));
+  const last = stats[stats.length - 1] || {};
+  results.history = {
+    payload_count: stats.length,
+    sync_range: last.sync_range || null,
+    history_month: (last.debug || {}).history_month || "",
+    background: !!(last.debug || {}).background_sync,
+    row_dates: Array.from(new Set((last.rows || []).map((row) => row.date))).sort(),
+    calendar_calls: requested.filter((url) => url.includes("driver_calendar")).length,
+    route_calls: requested.filter((url) => url.includes("planner/route")).length,
+  };
+  process.stdout.write(JSON.stringify(results));
+})();

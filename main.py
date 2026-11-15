@@ -23,6 +23,7 @@ from app_config import (
 )
 from app_state import AppState
 from services.credential_store import CredentialStore, VaultLockedError
+from services.history_sync import month_bounds, payload_is_complete, run_history
 from services.bug_report import (
     build_report_id,
     build_report_text,
@@ -36,6 +37,14 @@ from views.lock_screen import build_lock_screen
 from views.report_screen import build_report_view
 from views.splash_screen import build_splash_view
 from views.web_view import build_web_view
+
+
+# Storico: pausa tra un mese e l'altro, attesa massima di un mese, e
+# quanti errori di fila prima di rimandare alla prossima apertura.
+_HISTORY_PAUSE_SECONDS = 2.0
+_HISTORY_RETRY_SECONDS = 10.0
+_HISTORY_MONTH_TIMEOUT_SECONDS = 240.0
+_HISTORY_MAX_FAILURES = 2
 
 
 def main(page: ft.Page):
@@ -346,6 +355,10 @@ def main(page: ft.Page):
         await go_to(ROUTE_WEBVIEW)
 
     async def persist_scraped_stats(payload: dict) -> None:
+        history_month = str(((payload or {}).get("debug") or {}).get("history_month") or "")
+        if history_month:
+            await persist_history_month(history_month, payload)
+            return
         state.last_stats_debug = payload.get("debug", {}) if payload else {}
         is_background = bool((payload.get("debug") or {}).get("background_sync")) if payload else False
         is_quick_response = bool((payload.get("debug") or {}).get("quick_response")) if payload else False
@@ -359,7 +372,9 @@ def main(page: ft.Page):
             set_web_status("Nessun dato lavoro rilevato nella pagina corrente.")
             state.scraped_stats = payload or {}
             await refresh_timelog_data()
-            if not is_background:
+            if is_background:
+                page.run_task(run_history_sync)
+            else:
                 await go_to(ROUTE_DASHBOARD)
             return
         payload = dict(payload)
@@ -376,6 +391,10 @@ def main(page: ft.Page):
             set_web_status(f"Statistiche lette, salvataggio locale non riuscito: {exc}")
         await refresh_timelog_data()
         if is_background:
+            # Il mese in corso e' aggiornato: si prosegue con lo storico
+            # (non sulla risposta rapida, quando la raccolta e' ancora a meta').
+            if not is_quick_response:
+                page.run_task(run_history_sync)
             if page.route == ROUTE_DASHBOARD:
                 if show_dashboard_over_live_webview():
                     return
@@ -384,6 +403,118 @@ def main(page: ft.Page):
             if show_dashboard_over_live_webview():
                 return
             await go_to(ROUTE_DASHBOARD)
+
+    def set_history_status(message: str) -> None:
+        state.history_status = message
+        if page.route == ROUTE_DASHBOARD:
+            show_dashboard_over_live_webview()
+
+    async def persist_history_month(month: str, payload: dict) -> None:
+        waiter = state.history_waiters.get(month)
+        if waiter is None:
+            # Nessuno lo aspetta (logout nel frattempo): non si salva.
+            return
+        account, future = waiter
+        if account == state.account_id and state.session_unlocked and payload_is_complete(payload):
+            if payload.get("rows"):
+                payload = dict(payload)
+                payload.setdefault("captured_at", datetime.now(timezone.utc).isoformat())
+                try:
+                    await ensure_timelog_repository()
+                    await state.timelog_repository.save_snapshot(payload, account_id=account)
+                except Exception as exc:
+                    set_web_status(f"Storico {month}: salvataggio non riuscito: {exc}")
+                    payload = {}
+        else:
+            payload = {}
+        if not future.done():
+            future.set_result(payload)
+        await refresh_visible_dashboard()
+
+    async def collect_history_month(account: str, month: str) -> dict:
+        start, end = month_bounds(month)
+        future = asyncio.get_running_loop().create_future()
+        state.history_waiters[month] = (account, future)
+        options = json.dumps(
+            {
+                "background": True,
+                "history": True,
+                "from": start.isoformat(),
+                "to": end.isoformat(),
+                "month": month,
+            }
+        )
+        try:
+            result = await state.webview_ref.current.run_javascript(
+                "(function(){"
+                "if(!window.GeoinroadApp||!window.GeoinroadApp.collectStats){return 'missing';}"
+                f"window.GeoinroadApp.collectStats({options});"
+                "return 'started';"
+                "})()"
+            )
+            if "missing" in str(result):
+                return {}
+            return await asyncio.wait_for(future, timeout=_HISTORY_MONTH_TIMEOUT_SECONDS)
+        except (asyncio.TimeoutError, RuntimeError):
+            return {}
+        finally:
+            state.history_waiters.pop(month, None)
+
+    def stop_history_sync() -> None:
+        for _, future in list(state.history_waiters.values()):
+            if not future.done():
+                future.set_result({})
+        state.history_waiters.clear()
+        state.history_status = ""
+
+    async def run_history_sync() -> None:
+        """Scarica i mesi passati dal piu' recente, uno alla volta.
+
+        Ogni mese finito viene salvato e segnato in SQLite: compare subito
+        nelle statistiche, non si riscarica piu' da solo e, se l'app si
+        chiude a meta', alla prossima apertura si riparte da li'.
+        """
+        if state.history_running or not state.session_unlocked or not webview_is_live():
+            return
+        state.history_running = True
+        account = state.account_id
+        repository = state.timelog_repository
+
+        async def fetch_months() -> dict:
+            return await repository.fetch_history_months(account_id=account)
+
+        async def mark_month(month: str, status: str) -> None:
+            await repository.mark_history_month(
+                account_id=account, month=month, status=status
+            )
+
+        def is_active() -> bool:
+            return (
+                state.session_unlocked
+                and state.account_id == account
+                and webview_is_live()
+            )
+
+        try:
+            await ensure_timelog_repository()
+            await run_history(
+                today=date.today,
+                fetch_months=fetch_months,
+                collect_month=lambda month: collect_history_month(account, month),
+                mark_month=mark_month,
+                is_active=is_active,
+                set_status=set_history_status,
+                sleep=asyncio.sleep,
+                pause_seconds=_HISTORY_PAUSE_SECONDS,
+                retry_seconds=_HISTORY_RETRY_SECONDS,
+                max_failures=_HISTORY_MAX_FAILURES,
+            )
+        except Exception as exc:
+            set_history_status(f"Storico in pausa: {exc}")
+        finally:
+            state.history_running = False
+            if state.history_status.startswith("Storico: scarico"):
+                set_history_status("")
 
     def webview_is_live() -> bool:
         # La WebView resta viva anche sotto la dashboard in overlay:
@@ -448,9 +579,13 @@ def main(page: ft.Page):
         if not webview_is_live():
             return
         anchor = state.dashboard_anchor or date.today().isoformat()
-        start, _ = state.timelog_repository._period_bounds(
+        start, end = state.timelog_repository._period_bounds(
             state.dashboard_period, anchor
         )
+        if end < date.today():
+            # Periodo tutto passato: lo porta lo storico e si riaggiorna
+            # solo con il tasto, mai da solo.
+            return
         key = f"{state.dashboard_period}:{start.isoformat()}"
         if key in state.synced_periods:
             return
@@ -652,6 +787,7 @@ def main(page: ft.Page):
         state.account_id = "default"
         state.session_unlocked = False
         state.background_stats_started = False
+        stop_history_sync()
         if state.username_field_ref.current is not None:
             state.username_field_ref.current.value = ""
         if state.password_field_ref.current is not None:
@@ -729,6 +865,7 @@ def main(page: ft.Page):
         state.account_id = "default"
         state.session_unlocked = False
         state.background_stats_started = False
+        stop_history_sync()
         await go_to(ROUTE_LOCK)
 
     async def open_vault() -> None:

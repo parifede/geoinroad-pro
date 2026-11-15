@@ -51,6 +51,21 @@ class ScraperBehaviorTest(unittest.TestCase):
     def test_default_hours_are_counted_once_per_day(self):
         self.assertEqual(self.results["default_rows_per_day"], 1)
 
+    def test_history_month_uses_only_the_api(self):
+        history = self.results["history"]
+        # Un solo payload, senza risposta rapida dalla pagina di oggi.
+        self.assertEqual(history["payload_count"], 1)
+        # Calendario letto: il mese risulta completo e si puo' segnare.
+        self.assertEqual(history["sync_range"], {"from": "2026-09-01", "to": "2026-09-30"})
+        self.assertEqual(history["history_month"], "2026-09")
+        self.assertTrue(history["background"])
+        # Solo righe del mese chiesto, niente di oggi.
+        self.assertEqual(history["row_dates"], ["2026-09-01", "2026-09-02"])
+        # Nessuna richiesta della settimana corrente: una sola per il mese,
+        # piu' le rotte dei giorni.
+        self.assertEqual(history["calendar_calls"], 1)
+        self.assertEqual(history["route_calls"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

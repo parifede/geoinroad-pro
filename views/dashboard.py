@@ -249,16 +249,25 @@ def _period_nav(
 
 
 def _sync_status(state: AppState) -> ft.Control:
+    # La sincronizzazione chiesta dall'utente ha la precedenza sulla riga
+    # dello storico che si scarica in background.
+    message = state.dashboard_status or state.history_status
     return ft.Container(
         padding=ft.padding.symmetric(horizontal=16, vertical=2),
-        visible=bool(state.dashboard_status),
+        visible=bool(message),
         content=ft.Row(
             spacing=8,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             controls=[
-                ft.ProgressRing(width=12, height=12, stroke_width=2, color=_ACCENT),
+                ft.ProgressRing(
+                    width=12,
+                    height=12,
+                    stroke_width=2,
+                    color=_ACCENT,
+                    visible=bool(state.dashboard_status) or state.history_running,
+                ),
                 ft.Text(
-                    state.dashboard_status,
+                    message,
                     size=11,
                     color=_ACCENT,
                     weight=ft.FontWeight.W_600,

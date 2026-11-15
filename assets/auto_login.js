@@ -785,6 +785,8 @@
   }
 
   async function collectApiStats(range) {
+    // range.history: mese di storico, solo API e a ritmo lento.
+    const history = !!(range && range.history);
     const debug = {
       api_available: false,
       employee_id: "",
@@ -838,8 +840,9 @@
 
     // La settimana corrente serve sempre: e' quella che il calendario
     // renderizzato mostra con le sigle, da cui si impara la mappa tipi.
+    // Lo storico non renderizza il calendario: non gli serve.
     const week = currentWeekRange();
-    if (week.from < from || week.to > to) {
+    if (!history && (week.from < from || week.to > to)) {
       try {
         api.weekItems = await fetchCalendar(week.from, week.to);
       } catch (error) {
@@ -863,6 +866,8 @@
       api.items.map((item) => String(item.day || item.date || "")).filter(Boolean)
     )).sort();
     for (let cursor = 0; cursor < routeDays.length; cursor += 6) {
+      // Lo storico va piano per non appesantire il portale.
+      if (history && cursor > 0) await new Promise((resolve) => setTimeout(resolve, 400));
       const batch = routeDays.slice(cursor, cursor + 6);
       const batchResults = await Promise.all(batch.map(async (day) => {
         try {
@@ -1247,13 +1252,23 @@
       ? { from: String(options.from), to: String(options.to) }
       : currentMonthDateRange();
     const { from, to } = range;
-    const payloads = [extractCandidateStats()];
+    // Storico: un mese passato alla volta, solo dalle API. Niente clic sul
+    // calendario (le sigle arrivano dalla mappa tipi gia' imparata) e
+    // niente righe della pagina aperta, che e' di oggi.
+    const history = !!options.history;
+    const current = extractCandidateStats();
+    if (history) {
+      current.rows = (current.rows || []).filter((row) => row.date >= from && row.date <= to);
+    }
+    const payloads = [current];
     const fetches = [];
-    const api = await collectApiStats(range);
+    const api = await collectApiStats({ ...range, history });
 
     // 1. Sigle giornata dal calendario renderizzato, settimana per
     //    settimana all'indietro fino all'inizio del periodo.
-    const weeks = await renderCalendarWeeks(range, fetches);
+    const weeks = history
+      ? { payloads: [], nav: { weeks_wanted: 0, weeks_read: 0, headers: [], stop: "history" } }
+      : await renderCalendarWeeks(range, fetches);
     // Fuori dal periodo le settimane servono solo a imparare i tipi: le
     // loro 8 ore di default sovrascriverebbero le ore reali gia' salvate.
     for (const payload of weeks.payloads) {
@@ -1296,7 +1311,7 @@
     // 4. Senza API (portale cambiato o sessione non pronta): ultima
     //    risorsa, le pagine diario per-giorno, accettate solo se
     //    mostrano davvero la data richiesta.
-    if (!api.calendarOk) {
+    if (!api.calendarOk && !history) {
       const startDate = new Date(from + "T12:00:00");
       const endDate = new Date(to + "T12:00:00");
       const rangeDays = Math.round((endDate - startDate) / 86400000) + 1;
@@ -1354,14 +1369,19 @@
       payload.debug = {
         ...(payload.debug || {}),
         background_sync: backgroundSync,
+        history_month: options.history ? String(options.month || "") : "",
       };
       emit(statsPrefix, payload);
     } catch (error) {
       emit(errorPrefix, { stage: "stats", message: String(error) });
       const fallback = extractCandidateStats();
+      // Un mese di storico fallito torna senza righe e senza sync_range:
+      // l'app lo riprova invece di segnarlo come fatto.
+      if (options.history) fallback.rows = [];
       fallback.debug = {
         ...(fallback.debug || {}),
         background_sync: !!options.background,
+        history_month: options.history ? String(options.month || "") : "",
       };
       emit(statsPrefix, fallback);
     }

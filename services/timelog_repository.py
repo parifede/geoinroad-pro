@@ -122,6 +122,30 @@ class TimelogRepository:
             anchor_date=anchor_date,
         )
 
+    async def fetch_history_months(self, *, account_id: str = "default") -> dict[str, str]:
+        db_path = self._require_db_path()
+        return await asyncio.to_thread(
+            self._fetch_history_months_sync,
+            db_path,
+            account_id or "default",
+        )
+
+    async def mark_history_month(
+        self,
+        *,
+        account_id: str = "default",
+        month: str,
+        status: str,
+    ) -> None:
+        db_path = self._require_db_path()
+        await asyncio.to_thread(
+            self._mark_history_month_sync,
+            db_path,
+            account_id or "default",
+            month,
+            status,
+        )
+
     async def clear_account_data(self, *, account_id: str = "default") -> None:
         db_path = self._require_db_path()
         await asyncio.to_thread(
@@ -196,6 +220,19 @@ class TimelogRepository:
                     day TEXT NOT NULL,
                     status TEXT NOT NULL,
                     PRIMARY KEY (account_id, day)
+                )
+                """
+            )
+            # Mesi passati gia' scaricati dallo storico ("done" o "empty"):
+            # non si riscaricano da soli, solo con il tasto aggiorna.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS history_months (
+                    account_id TEXT NOT NULL,
+                    month TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    synced_at TEXT NOT NULL,
+                    PRIMARY KEY (account_id, month)
                 )
                 """
             )
@@ -755,6 +792,35 @@ class TimelogRepository:
         )
         return db_path.parent / "account_logs" / f"{safe_account}.json"
 
+    def _fetch_history_months_sync(self, db_path: Path, account_id: str) -> dict[str, str]:
+        with self._connect(db_path) as conn:
+            return {
+                str(row[0]): str(row[1])
+                for row in conn.execute(
+                    "SELECT month, status FROM history_months WHERE account_id = ?",
+                    (account_id,),
+                ).fetchall()
+            }
+
+    def _mark_history_month_sync(
+        self,
+        db_path: Path,
+        account_id: str,
+        month: str,
+        status: str,
+    ) -> None:
+        with self._connect(db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO history_months (account_id, month, status, synced_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(account_id, month)
+                DO UPDATE SET status = excluded.status, synced_at = excluded.synced_at
+                """,
+                (account_id, month, status, datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+
     def _clear_account_data_sync(self, db_path: Path, account_id: str) -> None:
         normalized_account_id = account_id or "default"
         with self._connect(db_path) as conn:
@@ -764,6 +830,10 @@ class TimelogRepository:
             )
             conn.execute(
                 "DELETE FROM day_states WHERE account_id = ?",
+                (normalized_account_id,),
+            )
+            conn.execute(
+                "DELETE FROM history_months WHERE account_id = ?",
                 (normalized_account_id,),
             )
             conn.commit()
