@@ -141,7 +141,7 @@ def build_lock_screen(
                                     ft.Row(
                                         controls=[
                                             ft.OutlinedButton(
-                                                "Sblocca con impronta",
+                                                "Sblocca",
                                                 expand=True,
                                                 icon=ft.Icons.FINGERPRINT,
                                                 on_click=lambda _: page.run_task(on_unlock),

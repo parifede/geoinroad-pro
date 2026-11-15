@@ -5,30 +5,30 @@ import flet_secure_storage as fss
 import flet_webview as fwv
 
 from app_config import (
-    GATE_PREFERENCES_PREFIX,
-    GATE_SHARED_PREFERENCES_NAME,
     LOGIN_URL,
+    VAULT_PREFERENCES_PREFIX,
+    VAULT_SHARED_PREFERENCES_NAME,
 )
 from services.timelog_repository import TimelogRepository
 
 
 @dataclass
 class AppState:
-    # Unico SecureStorage dell'app: RICHIEDE biometria/PIN e contiene solo
-    # il token del cancello d'ingresso, mai le credenziali (che stanno
-    # nelle preferences). Un secondo SecureStorage aperto nello stesso
-    # processo ne prenderebbe il posto nel plugin nativo e il prompt non
-    # comparirebbe piu'.
-    gate_storage: fss.SecureStorage = field(
+    # Unico SecureStorage dell'app: contiene utente e password. Sui telefoni
+    # con blocco schermo la sua chiave richiede impronta o PIN, chiesti una
+    # volta all'apertura; senza blocco schermo resta cifrato senza finestra
+    # (enforce_biometrics=False). Un secondo SecureStorage nello stesso
+    # processo aveva rotto il prompt: non aggiungerne altri.
+    vault: fss.SecureStorage = field(
         default_factory=lambda: fss.SecureStorage(
             android_options=fss.AndroidOptions(
                 reset_on_error=True,
                 migrate_on_algorithm_change=True,
-                enforce_biometrics=True,
+                enforce_biometrics=False,
                 key_cipher_algorithm=fss.KeyCipherAlgorithm.AES_GCM_NO_PADDING,
                 storage_cipher_algorithm=fss.StorageCipherAlgorithm.AES_GCM_NO_PADDING,
-                shared_preferences_name=GATE_SHARED_PREFERENCES_NAME,
-                preferences_key_prefix=GATE_PREFERENCES_PREFIX,
+                shared_preferences_name=VAULT_SHARED_PREFERENCES_NAME,
+                preferences_key_prefix=VAULT_PREFERENCES_PREFIX,
                 biometric_prompt_title="Sblocca Geoinroad Pro",
                 biometric_prompt_subtitle="Conferma la tua identita' per entrare",
             ),
@@ -85,9 +85,8 @@ class AppState:
     autologin_injected: bool = False
     login_failure_notified: bool = False
     background_stats_started: bool = False
-    gate_offer_shown: bool = False
-    # Cancello attivo e verifica non superata: la schermata di accesso
-    # offre il pulsante per riprovare con impronta/PIN.
+    # Verifica impronta/PIN annullata o fallita: la schermata di accesso
+    # offre il pulsante per riprovare.
     gate_locked: bool = False
     last_loaded_url: str = LOGIN_URL
     last_console_message: str = ""
