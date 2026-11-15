@@ -106,6 +106,8 @@ class AppState:
     # in SQLite (tabella history_months).
     synced_periods: set = field(default_factory=set)
     history_running: bool = False
+    # EarningsSettings dell'account (paga, diaria, ore di contratto) o None.
+    earnings_settings: object = None
     history_status: str = ""
     # mese "AAAA-MM" -> (account, future) in attesa del payload dello script.
     history_waiters: dict = field(default_factory=dict)

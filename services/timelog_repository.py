@@ -659,6 +659,9 @@ class TimelogRepository:
         }
 
     _STATUS_RANKS = {
+        # AA e' il tipo della giornata anche quando ha ore: vince sulle
+        # righe orarie generiche dello stesso giorno.
+        "adempimenti": 7,
         "lavorato": 6,
         "abortive": 5,
         "malattia": 4,
@@ -671,6 +674,7 @@ class TimelogRepository:
     }
 
     _TYPED_ABSENCES = {
+        "adempimenti",
         "abortive",
         "malattia",
         "infortunio",
@@ -721,6 +725,10 @@ class TimelogRepository:
         # RC riposo concordato. Altre sigle = assenze (non retribuita ecc.).
         marker = str(row.get("work_marker", "")).upper()
         text = f"{row.get('status', '')} {row.get('label', '')}".lower()
+        # AA altri adempimenti (sfondo rosa nel portale): pagati in base
+        # all'orario indicato, nessuna ora di default.
+        if marker == "AA" or "adempiment" in text:
+            return "adempimenti"
         if marker == "A" or "abortive" in text:
             return "abortive"
         if marker in ("F", "FA") or "ferie" in text or "vacanz" in text:

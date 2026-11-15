@@ -5,6 +5,12 @@ import flet as ft
 
 from app_config import ROUTE_DASHBOARD, BRAND_ACCENT, BRAND_DARK, BRAND_SURFACE
 from app_state import AppState
+from services.earnings import (
+    DISCLAIMER,
+    estimate_month,
+    format_euro,
+    format_number,
+)
 
 _ACCENT = BRAND_ACCENT
 _BG = BRAND_DARK
@@ -31,6 +37,7 @@ def build_dashboard_view(
     on_shift_period: Callable[[int], Awaitable[None]] | None = None,
     on_reset_period: Callable[[], Awaitable[None]] | None = None,
     on_refresh_stats: Callable[[], Awaitable[None]] | None = None,
+    on_edit_earnings: Callable[[], Awaitable[None]] | None = None,
 ) -> ft.View:
     return ft.View(
         route=ROUTE_DASHBOARD,
@@ -61,6 +68,14 @@ def build_dashboard_view(
                                     _metrics_row(state),
                                     ft.Container(height=16),
                                     _chart_card(state.timelog_daily_totals, state.dashboard_period),
+                                    *(
+                                        [
+                                            ft.Container(height=16),
+                                            _earnings_card(page, state, on_edit_earnings),
+                                        ]
+                                        if state.dashboard_period == "month"
+                                        else []
+                                    ),
                                     ft.Container(height=40),
                                 ],
                             ),
@@ -364,7 +379,8 @@ def _chart_card(daily_totals: list[dict], period: str) -> ft.Control:
                 content,
                 ft.Text(
                     "Verde: lavorato · Verde chiaro: abortive (8 h) · "
-                    "Giallo: ferie (8 h) · Blu: riposo · Arancio: festivo · "
+                    "Giallo: ferie (8 h) · Rosa: altri adempimenti · "
+                    "Blu: riposo · Arancio: festivo · "
                     "Rosso: malattia/infortunio · Grigio: assenza",
                     size=10,
                     color=_MUTED,
@@ -468,10 +484,12 @@ def _month_grid(daily_totals: list[dict]) -> ft.Control:
 
 # Colori allineati al calendario del portale Geoin ROAD:
 # verde presenti, verde chiaro abortive, blu riposi, giallo ferie,
-# arancio festivi, rosso malattia/infortunio, grigio altre assenze.
+# arancio festivi, rosso malattia/infortunio, grigio altre assenze,
+# rosa altri adempimenti (AA).
 _WORKED_COLOR = "#388E3C"
 _ABORTIVE_COLOR = "#81C784"
 _DAY_STATUS_STYLES = {
+    "adempimenti": ("AA", "#EC407A"),
     "riposo": ("Riposo", "#1E88E5"),
     "ferie": ("Ferie", "#FBC02D"),
     "permesso": ("Perm.", "#26A69A"),
@@ -492,8 +510,8 @@ def _month_day_cell(item: dict, max_val: float) -> ft.Control:
     if val > 0:
         if status == "abortive":
             bar_color = _ABORTIVE_COLOR
-        elif status == "ferie":
-            bar_color = _DAY_STATUS_STYLES["ferie"][1]
+        elif status in ("ferie", "adempimenti"):
+            bar_color = _DAY_STATUS_STYLES[status][1]
         else:
             bar_color = _WORKED_COLOR
         bar_opacity = max(0.25, fill_ratio)
@@ -540,6 +558,216 @@ def _month_day_cell(item: dict, max_val: float) -> ft.Control:
                 ),
             ],
         ),
+    )
+
+
+def _earnings_line(label: str, amount: str, *, strong: bool = False) -> ft.Control:
+    return ft.Row(
+        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        controls=[
+            ft.Text(
+                label,
+                size=15 if strong else 13,
+                color=_TEXT,
+                weight=ft.FontWeight.W_700 if strong else ft.FontWeight.W_500,
+                expand=True,
+            ),
+            ft.Text(
+                amount,
+                size=22 if strong else 13,
+                color=_ACCENT if strong else _TEXT,
+                weight=ft.FontWeight.W_800 if strong else ft.FontWeight.W_600,
+            ),
+        ],
+    )
+
+
+def _earnings_card(
+    page: ft.Page,
+    state: AppState,
+    on_edit_earnings: Callable[[], Awaitable[None]] | None,
+) -> ft.Control:
+    settings = state.earnings_settings
+    daily_totals = state.timelog_daily_totals or []
+    month_start = _parse_iso_date(daily_totals[0].get("day") if daily_totals else None)
+
+    controls: list[ft.Control] = [
+        ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            controls=[
+                ft.Text("Stima del mese", size=15, weight=ft.FontWeight.W_700, color=_TEXT),
+                ft.TextButton(
+                    "Imposta" if settings is None else "Modifica",
+                    style=ft.ButtonStyle(color=_ACCENT),
+                    on_click=lambda _: (
+                        page.run_task(on_edit_earnings)
+                        if on_edit_earnings is not None
+                        else None
+                    ),
+                ),
+            ],
+        )
+    ]
+    if settings is None or month_start is None:
+        controls.append(
+            ft.Text(
+                "Inserisci la tua paga oraria e le ore settimanali da contratto "
+                "per vedere quanto prendi questo mese. Le cifre restano solo "
+                "sul telefono.",
+                size=13,
+                color=_MUTED,
+            )
+        )
+    else:
+        estimate = estimate_month(daily_totals, month_start, settings)
+        overtime_label = (
+            f"Straordinari {_fmt_h(estimate['overtime_hours'])} × "
+            f"{format_euro(estimate['overtime_rate'])}"
+        )
+        if estimate["overtime_rate_is_ordinary"] and estimate["overtime_hours"] > 0:
+            overtime_label += " (paga ordinaria: imposta quella straordinaria)"
+        controls.extend(
+            [
+                _earnings_line(
+                    f"Ore ordinarie {_fmt_h(estimate['ordinary_hours'])} × "
+                    f"{format_euro(settings.hourly_rate)}",
+                    format_euro(estimate["ordinary_amount"]),
+                ),
+                _earnings_line(overtime_label, format_euro(estimate["overtime_amount"])),
+                _earnings_line(
+                    f"Diaria {estimate['allowance_days']} giorni × "
+                    f"{format_euro(estimate['allowance_rate'])}"
+                    if settings.daily_allowance
+                    else "Diaria non impostata",
+                    format_euro(estimate["allowance_amount"]),
+                ),
+            ]
+        )
+        if estimate["uncertain_allowance_days"] and settings.daily_allowance:
+            controls.append(
+                ft.Text(
+                    f"Di cui {estimate['uncertain_allowance_days']} con AA: "
+                    "diaria da verificare.",
+                    size=11,
+                    color=_MUTED,
+                )
+            )
+        controls.extend(
+            [
+                ft.Text(
+                    f"Soglia straordinari del mese: {_fmt_h(estimate['threshold_hours'])} "
+                    f"({format_number(settings.weekly_hours)} h/sett. × "
+                    f"{estimate['weekdays']} giorni lun-ven)",
+                    size=11,
+                    color=_MUTED,
+                ),
+                ft.Divider(height=1, color=_DIVIDER),
+                _earnings_line(
+                    "Totale lordo stimato",
+                    format_euro(estimate["gross_total"]),
+                    strong=True,
+                ),
+                ft.Text(DISCLAIMER, size=12, color=_MUTED, italic=True),
+            ]
+        )
+
+    return ft.Container(
+        margin=ft.margin.symmetric(horizontal=16),
+        padding=ft.padding.symmetric(horizontal=20, vertical=16),
+        bgcolor=_CARD,
+        border_radius=20,
+        shadow=_SHADOW,
+        content=ft.Column(spacing=8, controls=controls),
+    )
+
+
+def _parse_iso_date(value) -> date | None:
+    try:
+        return date.fromisoformat(str(value or "")[:10]).replace(day=1)
+    except ValueError:
+        return None
+
+
+def build_earnings_dialog(
+    *,
+    page: ft.Page,
+    state: AppState,
+    on_save: Callable[[dict], Awaitable[None]],
+) -> ft.AlertDialog:
+    settings = state.earnings_settings
+
+    def field(label: str, value: float | None, hint: str) -> ft.TextField:
+        return ft.TextField(
+            label=label,
+            value=format_number(value) if value else "",
+            hint_text=hint,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            focused_border_color=_ACCENT,
+            cursor_color=_ACCENT,
+        )
+
+    hourly = field("Paga oraria (€)", settings.hourly_rate if settings else None, "es. 12,50")
+    overtime = field(
+        "Paga oraria straordinaria (€, facoltativa)",
+        settings.overtime_rate if settings else None,
+        "la trovi in busta paga",
+    )
+    allowance = field(
+        "Diaria giornaliera (€, facoltativa)",
+        settings.daily_allowance if settings else None,
+        "es. 30",
+    )
+    weekly = field(
+        "Ore settimanali da contratto",
+        settings.weekly_hours if settings else None,
+        "es. 40",
+    )
+    error = ft.Text("", size=12, color=ft.Colors.RED_700, visible=False)
+
+    def show_error(message: str) -> None:
+        error.value = message
+        error.visible = bool(message)
+        page.update()
+
+    async def save() -> None:
+        await on_save(
+            {
+                "hourly_rate": hourly.value or "",
+                "overtime_rate": overtime.value or "",
+                "daily_allowance": allowance.value or "",
+                "weekly_hours": weekly.value or "",
+                "show_error": show_error,
+            }
+        )
+
+    return ft.AlertDialog(
+        modal=True,
+        title=ft.Text("Stima del mese"),
+        content=ft.Column(
+            tight=True,
+            spacing=12,
+            scroll=ft.ScrollMode.AUTO,
+            controls=[
+                ft.Text(
+                    "Le cifre restano solo su questo telefono. Straordinari: le "
+                    "ore oltre la soglia mensile (ore settimanali / 5 × giorni "
+                    "dal lunedì al venerdì). Diaria: giorni con più di 6 ore, "
+                    "ferie escluse.",
+                    size=12,
+                    color=_MUTED,
+                ),
+                hourly,
+                overtime,
+                allowance,
+                weekly,
+                error,
+            ],
+        ),
+        actions=[
+            ft.TextButton("Annulla", on_click=lambda _: page.pop_dialog()),
+            ft.TextButton("Salva", on_click=lambda _: page.run_task(save)),
+        ],
     )
 
 

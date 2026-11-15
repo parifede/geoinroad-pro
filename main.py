@@ -23,6 +23,12 @@ from app_config import (
 )
 from app_state import AppState
 from services.credential_store import CredentialStore, VaultLockedError
+from services.earnings import (
+    build_settings,
+    settings_from_json,
+    settings_key,
+    settings_to_json,
+)
 from services.history_sync import month_bounds, payload_is_complete, run_history
 from services.bug_report import (
     build_report_id,
@@ -32,7 +38,7 @@ from services.bug_report import (
     save_report,
 )
 from services.js_bridge import build_auto_login_script
-from views.dashboard import build_dashboard_view
+from views.dashboard import build_dashboard_view, build_earnings_dialog
 from views.lock_screen import build_lock_screen
 from views.report_screen import build_report_view
 from views.splash_screen import build_splash_view
@@ -189,6 +195,31 @@ def main(page: ft.Page):
             period=state.dashboard_period,
             anchor_date=anchor,
         )
+        state.earnings_settings = settings_from_json(
+            await preferences.get(settings_key(state.account_id))
+        )
+
+    async def open_earnings_dialog() -> None:
+        page.show_dialog(
+            build_earnings_dialog(page=page, state=state, on_save=save_earnings)
+        )
+
+    async def save_earnings(values: dict) -> None:
+        # Paga, diaria e ore di contratto: solo nelle preferences del
+        # telefono, per account, cancellate al logout.
+        settings, error = build_settings(
+            hourly_rate=values.get("hourly_rate", ""),
+            weekly_hours=values.get("weekly_hours", ""),
+            overtime_rate=values.get("overtime_rate", ""),
+            daily_allowance=values.get("daily_allowance", ""),
+        )
+        if settings is None:
+            values["show_error"](error)
+            return
+        await preferences.set(settings_key(state.account_id), settings_to_json(settings))
+        state.earnings_settings = settings
+        page.pop_dialog()
+        await refresh_visible_dashboard()
 
     async def start_background_stats_sync() -> None:
         if state.background_stats_started:
@@ -267,6 +298,7 @@ def main(page: ft.Page):
                 on_shift_period=shift_dashboard_period,
                 on_reset_period=reset_dashboard_period,
                 on_refresh_stats=sync_dashboard_period,
+                on_edit_earnings=open_earnings_dialog,
             ),
         )
 
@@ -762,6 +794,8 @@ def main(page: ft.Page):
     async def clear_credentials() -> None:
         account_to_clear = state.account_id
         try:
+            await preferences.remove(settings_key(account_to_clear))
+            state.earnings_settings = None
             await credential_store.clear_credentials(
                 page=page,
                 vault=state.vault,
@@ -848,6 +882,8 @@ def main(page: ft.Page):
     async def logout() -> None:
         account_to_clear = state.account_id
         try:
+            await preferences.remove(settings_key(account_to_clear))
+            state.earnings_settings = None
             await credential_store.clear_credentials(
                 page=page,
                 vault=state.vault,
@@ -1090,6 +1126,7 @@ def main(page: ft.Page):
                     on_shift_period=shift_dashboard_period,
                     on_reset_period=reset_dashboard_period,
                     on_refresh_stats=sync_dashboard_period,
+                    on_edit_earnings=open_earnings_dialog,
                 )
             )
             page.drawer = None
